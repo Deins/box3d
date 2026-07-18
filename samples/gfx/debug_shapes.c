@@ -789,16 +789,36 @@ static MeshHandle BuildHeightField( const b3HeightFieldData* hf )
 	return h;
 }
 
+typedef struct SDFBuildContext
+{
+	BuildBuffer* buffer;
+	bool success;
+} SDFBuildContext;
+
+static bool BuildSDFTriangle( b3Vec3 a, b3Vec3 b, b3Vec3 c, int triangleIndex, void* rawContext )
+{
+	(void)triangleIndex;
+	SDFBuildContext* context = (SDFBuildContext*)rawContext;
+	context->success = EmitFlatTriangle( context->buffer, a, b, c, TriangleNormal( a, b, c ) );
+	return context->success;
+}
+
 static MeshHandle BuildSDF( const b3SDFData* sdf )
 {
-	const b3MeshData* meshData = b3GetSDFMesh( sdf );
-	if ( meshData == NULL )
+	BuildBuffer buffer = { 0 };
+	SDFBuildContext context = { &buffer, true };
+	b3QuerySDF( sdf, sdf->aabb, BuildSDFTriangle, &context );
+	if ( context.success == false || buffer.indexCount == 0 )
 	{
-		fprintf( stderr, "error: sdf has no baked triangles (hash=0x%08x)\n", sdf->hash );
+		BufferFree( &buffer );
+		fprintf( stderr, "error: sdf has no surface triangles (hash=0x%08x)\n", sdf->hash );
 		return InvalidMeshHandle();
 	}
 
-	return BuildMeshData( meshData );
+	MeshHandle handle =
+		RegisterMesh( sdf->hash, buffer.vertices, buffer.vertexCount, buffer.indices, buffer.indexCount, "geom_sdf" );
+	BufferFree( &buffer );
+	return handle;
 }
 
 MeshHandle FindOrAddHull( const b3HullData* hull )
@@ -857,13 +877,7 @@ MeshHandle FindOrAddSDF( const b3SDFData* sdf )
 		return InvalidMeshHandle();
 	}
 
-	const b3MeshData* meshData = b3GetSDFMesh( sdf );
-	if ( meshData == NULL )
-	{
-		return InvalidMeshHandle();
-	}
-
-	MeshHandle existing = FindMesh( meshData->hash );
+	MeshHandle existing = FindMesh( sdf->hash );
 	if ( IsMeshHandleValid( existing ) )
 	{
 		AddMeshReference( existing );

@@ -2362,9 +2362,10 @@ typedef struct b3SDFDef
 } b3SDFDef;
 
 /// 64-bit SDF version. Useful for validating serialized data.
-#define B3_SDF_VERSION 0x6E82D51AA3CB4797ull
+#define B3_SDF_VERSION 0xD69F5160048763A1ull
 
-/// A signed-distance field with a baked indexed zero-isosurface mesh.
+/// A sampled signed-distance field. Surface triangles are generated on demand
+/// from the cells touched by a collision query.
 /// @note This data structure has data hanging off the end and cannot be directly copied.
 typedef struct b3SDFData
 {
@@ -2389,14 +2390,8 @@ typedef struct b3SDFData
 	int countY;
 	int countZ;
 
-	/// Number of baked zero-isosurface triangles.
-	int triangleCount;
-
 	/// Offset of the float sample array from the struct address.
 	int distancesOffset;
-
-	/// Offset of the baked zero-isosurface mesh from the struct address.
-	int meshOffset;
 } b3SDFData;
 
 /**@}*/ // sdf

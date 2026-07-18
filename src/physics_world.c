@@ -4071,11 +4071,10 @@ void b3ValidateContacts( b3World* world )
 				}
 				else if ( shapeA->type == b3_sdfShape )
 				{
-					int triangleCount = shapeA->sdf->triangleCount;
 					for ( int i = 0; i < cacheCount; ++i )
 					{
 						int triangleIndex = contact->meshContact.triangleCache.data[i].triangleIndex;
-						B3_ASSERT( 0 <= triangleIndex && triangleIndex < triangleCount );
+						B3_ASSERT( triangleIndex >= 0 );
 					}
 				}
 				else

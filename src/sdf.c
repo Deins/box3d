@@ -3,6 +3,7 @@
 
 #include "core.h"
 #include "shape.h"
+#include "simd.h"
 
 #include "box3d/collision.h"
 #include "box3d/constants.h"
@@ -11,7 +12,6 @@
 #include <float.h>
 #include <limits.h>
 #include <math.h>
-#include <stdlib.h>
 #include <string.h>
 
 typedef struct b3SDFBuildTriangle
@@ -54,35 +54,6 @@ static void b3CanonicalizeSDFTriangle( b3Vec3 output[3], const b3SDFBuildTriangl
 	}
 }
 
-static int b3CompareSDFTriangles( const void* contextA, const void* contextB )
-{
-	const b3SDFBuildTriangle* a = contextA;
-	const b3SDFBuildTriangle* b = contextB;
-	b3Vec3 keyA[3], keyB[3];
-	b3CanonicalizeSDFTriangle( keyA, a );
-	b3CanonicalizeSDFTriangle( keyB, b );
-	for ( int i = 0; i < 3; ++i )
-	{
-		int comparison = b3CompareSDFPoints( keyA + i, keyB + i );
-		if ( comparison != 0 )
-		{
-			return comparison;
-		}
-	}
-
-	// Deterministically order duplicate geometry that uses a different cyclic
-	// vertex order. The first triangle retained below is then platform independent.
-	for ( int i = 0; i < 3; ++i )
-	{
-		int comparison = b3CompareSDFPoints( a->vertices + i, b->vertices + i );
-		if ( comparison != 0 )
-		{
-			return comparison;
-		}
-	}
-	return 0;
-}
-
 static bool b3SameSDFTriangleGeometry( const b3SDFBuildTriangle* a, const b3SDFBuildTriangle* b )
 {
 	b3Vec3 keyA[3], keyB[3];
@@ -113,8 +84,7 @@ static int b3SDFCellTriangles( const b3Vec3* points, const float* values, b3SDFB
 	// A six-tetrahedral decomposition avoids the lookup table and ambiguous cases of
 	// marching cubes. The diagonal is shared by all six tetrahedra.
 	static const int tetrahedra[6][4] = {
-		{ 0, 5, 1, 6 }, { 0, 1, 2, 6 }, { 0, 2, 3, 6 },
-		{ 0, 3, 7, 6 }, { 0, 7, 4, 6 }, { 0, 4, 5, 6 },
+		{ 0, 5, 1, 6 }, { 0, 1, 2, 6 }, { 0, 2, 3, 6 }, { 0, 3, 7, 6 }, { 0, 7, 4, 6 }, { 0, 4, 5, 6 },
 	};
 
 	static const int edges[6][2] = {
@@ -245,8 +215,7 @@ static int b3SDFBuildCell( const b3SDFDef* data, int x, int y, int z, b3SDFBuild
 	b3Vec3 points[8];
 	float values[8];
 	static const int offsets[8][3] = {
-		{ 0, 0, 0 }, { 1, 0, 0 }, { 1, 1, 0 }, { 0, 1, 0 },
-		{ 0, 0, 1 }, { 1, 0, 1 }, { 1, 1, 1 }, { 0, 1, 1 },
+		{ 0, 0, 0 }, { 1, 0, 0 }, { 1, 1, 0 }, { 0, 1, 0 }, { 0, 0, 1 }, { 1, 0, 1 }, { 1, 1, 1 }, { 0, 1, 1 },
 	};
 
 	for ( int i = 0; i < 8; ++i )
@@ -283,8 +252,7 @@ static float b3SDFSample( const b3SDFData* sdf, b3Vec3 point )
 
 	float value[8];
 	static const int offsets[8][3] = {
-		{ 0, 0, 0 }, { 1, 0, 0 }, { 1, 1, 0 }, { 0, 1, 0 },
-		{ 0, 0, 1 }, { 1, 0, 1 }, { 1, 1, 1 }, { 0, 1, 1 },
+		{ 0, 0, 0 }, { 1, 0, 0 }, { 1, 1, 0 }, { 0, 1, 0 }, { 0, 0, 1 }, { 1, 0, 1 }, { 1, 1, 1 }, { 0, 1, 1 },
 	};
 	for ( int i = 0; i < 8; ++i )
 	{
@@ -315,114 +283,55 @@ b3SDFData* b3CreateSDF( const b3SDFDef* data )
 
 	size_t sampleCount = (size_t)data->countX * (size_t)data->countY * (size_t)data->countZ;
 	size_t cellCount = (size_t)( data->countX - 1 ) * (size_t)( data->countY - 1 ) * (size_t)( data->countZ - 1 );
-	if ( sampleCount > (size_t)INT_MAX || cellCount > (size_t)INT_MAX / 36u )
+	if ( sampleCount > (size_t)INT_MAX || cellCount > (size_t)INT_MAX / 12u )
 	{
 		return NULL;
 	}
 
-	for ( size_t i = 0; i < sampleCount; ++i )
+	int minX = data->countX;
+	int minY = data->countY;
+	int minZ = data->countZ;
+	int maxX = -1;
+	int maxY = -1;
+	int maxZ = -1;
+	for ( int z = 0; z < data->countZ; ++z )
 	{
-		if ( b3IsValidFloat( data->distances[i] ) == false )
+		for ( int y = 0; y < data->countY; ++y )
 		{
-			return NULL;
+			for ( int x = 0; x < data->countX; ++x )
+			{
+				float distance = data->distances[b3SDFIndex( data->countX, data->countY, x, y, z )];
+				if ( b3IsValidFloat( distance ) == false )
+				{
+					return NULL;
+				}
+				if ( distance <= 0.0f )
+				{
+					minX = b3MinInt( minX, x );
+					minY = b3MinInt( minY, y );
+					minZ = b3MinInt( minZ, z );
+					maxX = b3MaxInt( maxX, x );
+					maxY = b3MaxInt( maxY, y );
+					maxZ = b3MaxInt( maxZ, z );
+				}
+			}
 		}
 	}
 
-	b3Vec3 gridExtent = b3Mul( data->spacing,
-		(b3Vec3){ (float)( data->countX - 1 ), (float)( data->countY - 1 ), (float)( data->countZ - 1 ) } );
+	b3Vec3 gridExtent =
+		b3Mul( data->spacing, (b3Vec3){ (float)( data->countX - 1 ), (float)( data->countY - 1 ), (float)( data->countZ - 1 ) } );
 	b3Vec3 gridUpper = b3Add( data->origin, gridExtent );
 	if ( b3IsValidVec3( gridExtent ) == false || b3IsValidVec3( gridUpper ) == false )
 	{
 		return NULL;
 	}
 
-	int buildTriangleCount = 0;
-	b3SDFDef source = *data;
-	source.distances = data->distances;
-	for ( int z = 0; z < data->countZ - 1; ++z )
-	{
-		for ( int y = 0; y < data->countY - 1; ++y )
-		{
-			for ( int x = 0; x < data->countX - 1; ++x )
-			{
-				buildTriangleCount += b3SDFBuildCell( &source, x, y, z, NULL );
-			}
-		}
-	}
-
-	b3MeshData* surfaceMesh = NULL;
-	if ( buildTriangleCount > 0 )
-	{
-		int buildTriangleCapacity = buildTriangleCount;
-		b3SDFBuildTriangle* buildTriangles = b3Alloc( (size_t)buildTriangleCapacity * sizeof( b3SDFBuildTriangle ) );
-
-		int triangleIndex = 0;
-		for ( int z = 0; z < data->countZ - 1; ++z )
-		{
-			for ( int y = 0; y < data->countY - 1; ++y )
-			{
-				for ( int x = 0; x < data->countX - 1; ++x )
-				{
-					triangleIndex += b3SDFBuildCell( &source, x, y, z, buildTriangles + triangleIndex );
-				}
-			}
-		}
-		B3_ASSERT( triangleIndex == buildTriangleCount );
-
-		qsort( buildTriangles, (size_t)buildTriangleCount, sizeof( b3SDFBuildTriangle ), b3CompareSDFTriangles );
-		int uniqueTriangleCount = 1;
-		for ( int i = 1; i < buildTriangleCount; ++i )
-		{
-			if ( b3SameSDFTriangleGeometry( buildTriangles + uniqueTriangleCount - 1, buildTriangles + i ) == false )
-			{
-				buildTriangles[uniqueTriangleCount] = buildTriangles[i];
-				uniqueTriangleCount += 1;
-			}
-		}
-		buildTriangleCount = uniqueTriangleCount;
-
-		int vertexCount = 3 * buildTriangleCount;
-		int32_t* indices = b3Alloc( (size_t)vertexCount * sizeof( int32_t ) );
-		for ( int i = 0; i < vertexCount; ++i )
-		{
-			indices[i] = i;
-		}
-
-		float minSpacing = b3MinFloat( data->spacing.x, b3MinFloat( data->spacing.y, data->spacing.z ) );
-		b3MeshDef meshDef = { 0 };
-		meshDef.vertices = buildTriangles[0].vertices;
-		meshDef.indices = indices;
-		meshDef.weldTolerance = 0.0001f * minSpacing;
-		meshDef.vertexCount = vertexCount;
-		meshDef.triangleCount = buildTriangleCount;
-		meshDef.weldVertices = true;
-		meshDef.useMedianSplit = true;
-		meshDef.identifyEdges = true;
-		surfaceMesh = b3CreateMesh( &meshDef, NULL, 0 );
-
-		b3Free( indices, (size_t)vertexCount * sizeof( int32_t ) );
-		b3Free( buildTriangles, (size_t)buildTriangleCapacity * sizeof( b3SDFBuildTriangle ) );
-		if ( surfaceMesh == NULL )
-		{
-			return NULL;
-		}
-	}
-
 	size_t byteCount = b3AlignUp8( sizeof( b3SDFData ) );
 	int distancesOffset = (int)byteCount;
 	byteCount += b3AlignUp8( sampleCount * sizeof( float ) );
-	int meshOffset = surfaceMesh != NULL ? (int)byteCount : 0;
-	if ( surfaceMesh != NULL )
-	{
-		byteCount += b3AlignUp8( (size_t)surfaceMesh->byteCount );
-	}
 
 	if ( byteCount > (size_t)INT_MAX )
 	{
-		if ( surfaceMesh != NULL )
-		{
-			b3DestroyMesh( surfaceMesh );
-		}
 		return NULL;
 	}
 
@@ -435,20 +344,22 @@ b3SDFData* b3CreateSDF( const b3SDFDef* data )
 	sdf->countX = data->countX;
 	sdf->countY = data->countY;
 	sdf->countZ = data->countZ;
-	sdf->triangleCount = surfaceMesh != NULL ? surfaceMesh->triangleCount : 0;
 	sdf->distancesOffset = distancesOffset;
-	sdf->meshOffset = meshOffset;
-	sdf->aabb.lowerBound = data->origin;
-	sdf->aabb.upperBound = gridUpper;
+	if ( maxX >= 0 )
+	{
+		b3Vec3 lowerIndex = { (float)b3MaxInt( minX - 1, 0 ), (float)b3MaxInt( minY - 1, 0 ), (float)b3MaxInt( minZ - 1, 0 ) };
+		b3Vec3 upperIndex = { (float)b3MinInt( maxX + 1, data->countX - 1 ), (float)b3MinInt( maxY + 1, data->countY - 1 ),
+							  (float)b3MinInt( maxZ + 1, data->countZ - 1 ) };
+		sdf->aabb.lowerBound = b3Add( data->origin, b3Mul( data->spacing, lowerIndex ) );
+		sdf->aabb.upperBound = b3Add( data->origin, b3Mul( data->spacing, upperIndex ) );
+	}
+	else
+	{
+		sdf->aabb = (b3AABB){ data->origin, data->origin };
+	}
 
 	float* distances = (float*)( (intptr_t)sdf + distancesOffset );
 	memcpy( distances, data->distances, sampleCount * sizeof( float ) );
-
-	if ( surfaceMesh != NULL )
-	{
-		memcpy( (uint8_t*)sdf + meshOffset, surfaceMesh, (size_t)surfaceMesh->byteCount );
-		b3DestroyMesh( surfaceMesh );
-	}
 
 	sdf->hash = 0;
 	sdf->hash = b3NonZeroHash( b3Hash( B3_HASH_INIT, (const uint8_t*)sdf, sdf->byteCount ) );
@@ -463,6 +374,108 @@ void b3DestroySDF( b3SDFData* sdf )
 b3AABB b3ComputeSDFAABB( const b3SDFData* shape, b3Transform transform )
 {
 	return b3AABB_Transform( transform, shape->aabb );
+}
+
+typedef struct b3SDFOverlapContext
+{
+	b3ShapeProxy proxy;
+	b3SimplexCache cache;
+	bool hit;
+} b3SDFOverlapContext;
+
+static bool b3SDFOverlapFcn( b3Vec3 a, b3Vec3 b, b3Vec3 c, int triangleIndex, void* rawContext )
+{
+	B3_UNUSED( triangleIndex );
+	b3SDFOverlapContext* context = rawContext;
+	b3Vec3 vertices[3] = { a, b, c };
+	b3DistanceInput input = {
+		.proxyA = { vertices, 3, 0.0f },
+		.proxyB = context->proxy,
+		.transform = b3Transform_identity,
+		.useRadii = true,
+	};
+	context->cache.count = 0;
+	b3DistanceOutput output = b3ShapeDistance( &input, &context->cache, NULL, 0 );
+	context->hit = output.distance < 0.1f * B3_LINEAR_SLOP;
+	return context->hit == false;
+}
+
+typedef struct b3SDFShapeCastContext
+{
+	const b3ShapeCastInput* input;
+	b3CastOutput output;
+} b3SDFShapeCastContext;
+
+static bool b3SDFShapeCastFcn( b3Vec3 a, b3Vec3 b, b3Vec3 c, int triangleIndex, void* rawContext )
+{
+	b3SDFShapeCastContext* context = rawContext;
+	b3Vec3 vertices[3] = { b3Vec3_zero, b3Sub( b, a ), b3Sub( c, a ) };
+	b3ShapeCastPairInput pairInput = {
+		.proxyA = { vertices, 3, 0.0f },
+		.proxyB = context->input->proxy,
+		.transform = { b3Neg( a ), b3Quat_identity },
+		.translationB = context->input->translation,
+		.maxFraction = context->output.fraction,
+		.canEncroach = context->input->canEncroach,
+	};
+	b3CastOutput output = b3ShapeCast( &pairInput );
+	if ( output.hit )
+	{
+		output.point = b3Add( output.point, a );
+		output.triangleIndex = triangleIndex;
+		output.materialIndex = 0;
+		context->output = output;
+	}
+	return true;
+}
+
+typedef struct b3SDFRayContext
+{
+	const b3RayCastInput* input;
+	b3CastOutput output;
+} b3SDFRayContext;
+
+static bool b3SDFRayFcn( b3Vec3 a, b3Vec3 b, b3Vec3 c, int triangleIndex, void* rawContext )
+{
+	b3SDFRayContext* context = rawContext;
+	float fraction = b3IntersectRayTriangle( b3LoadV( &context->input->origin.x ), b3LoadV( &context->input->translation.x ),
+											 b3LoadV( &a.x ), b3LoadV( &b.x ), b3LoadV( &c.x ) );
+	if ( fraction < context->output.fraction )
+	{
+		context->output.point = b3MulAdd( context->input->origin, fraction, context->input->translation );
+		context->output.normal = b3Normalize( b3Cross( b3Sub( b, a ), b3Sub( c, a ) ) );
+		context->output.fraction = fraction;
+		context->output.triangleIndex = triangleIndex;
+		context->output.materialIndex = 0;
+		context->output.hit = true;
+	}
+	return true;
+}
+
+typedef struct b3SDFMoverContext
+{
+	b3PlaneResult* planes;
+	int capacity;
+	int count;
+	b3DistanceInput input;
+	b3SimplexCache cache;
+	float radius;
+} b3SDFMoverContext;
+
+static bool b3SDFMoverFcn( b3Vec3 a, b3Vec3 b, b3Vec3 c, int triangleIndex, void* rawContext )
+{
+	B3_UNUSED( triangleIndex );
+	b3SDFMoverContext* context = rawContext;
+	b3Vec3 vertices[3] = { a, b, c };
+	context->input.proxyA = (b3ShapeProxy){ vertices, 3, 0.0f };
+	context->cache.count = 0;
+	b3DistanceOutput output = b3ShapeDistance( &context->input, &context->cache, NULL, 0 );
+	if ( output.distance > 0.0f && output.distance <= context->radius )
+	{
+		b3Plane plane = { output.normal, context->radius - output.distance };
+		context->planes[context->count++] = (b3PlaneResult){ plane, output.pointA };
+	}
+	return context->count < context->capacity;
 }
 
 bool b3OverlapSDF( const b3SDFData* shape, b3Transform shapeTransform, const b3ShapeProxy* proxy )
@@ -487,51 +500,168 @@ bool b3OverlapSDF( const b3SDFData* shape, b3Transform shapeTransform, const b3S
 	{
 		return true;
 	}
-
-	const b3MeshData* meshData = b3GetSDFMesh( shape );
-	if ( meshData == NULL )
-	{
-		return false;
-	}
-
-	b3Mesh mesh = { meshData, b3Vec3_one };
-	return b3OverlapMesh( &mesh, b3Transform_identity, &localProxy );
+	b3SDFOverlapContext context = { .proxy = localProxy };
+	b3QuerySDF( shape, proxyBounds, b3SDFOverlapFcn, &context );
+	return context.hit;
 }
 
 b3CastOutput b3ShapeCastSDF( const b3SDFData* shape, const b3ShapeCastInput* input )
 {
-	const b3MeshData* meshData = b3GetSDFMesh( shape );
-	if ( meshData == NULL )
-	{
-		return (b3CastOutput){ .fraction = input->maxFraction, .triangleIndex = B3_NULL_INDEX };
-	}
-
-	b3Mesh mesh = { meshData, b3Vec3_one };
-	return b3ShapeCastMesh( &mesh, input );
+	b3AABB startBounds = b3MakeAABB( input->proxy.points, input->proxy.count, input->proxy.radius );
+	b3AABB endBounds = { b3Add( startBounds.lowerBound, b3MulSV( input->maxFraction, input->translation ) ),
+						 b3Add( startBounds.upperBound, b3MulSV( input->maxFraction, input->translation ) ) };
+	b3SDFShapeCastContext context = {
+		.input = input,
+		.output = { .fraction = input->maxFraction, .triangleIndex = B3_NULL_INDEX },
+	};
+	b3QuerySDF( shape, b3AABB_Union( startBounds, endBounds ), b3SDFShapeCastFcn, &context );
+	return context.output;
 }
 
 b3CastOutput b3RayCastSDF( const b3SDFData* shape, const b3RayCastInput* input )
 {
-	const b3MeshData* meshData = b3GetSDFMesh( shape );
-	if ( meshData == NULL )
-	{
-		return (b3CastOutput){ .fraction = input->maxFraction, .triangleIndex = B3_NULL_INDEX };
-	}
+	b3Vec3 end = b3MulAdd( input->origin, input->maxFraction, input->translation );
+	b3SDFRayContext context = {
+		.input = input,
+		.output = { .fraction = input->maxFraction, .triangleIndex = B3_NULL_INDEX },
+	};
+	b3QuerySDF( shape, (b3AABB){ b3Min( input->origin, end ), b3Max( input->origin, end ) }, b3SDFRayFcn, &context );
+	return context.output;
+}
 
-	b3Mesh mesh = { meshData, b3Vec3_one };
-	return b3RayCastMesh( &mesh, input );
+static int b3BuildSDFCellUnique( const b3SDFData* sdf, int x, int y, int z, b3SDFBuildTriangle* triangles )
+{
+	b3SDFDef source = {
+		.distances = (float*)b3GetSDFDistances( sdf ),
+		.origin = sdf->origin,
+		.spacing = sdf->spacing,
+		.countX = sdf->countX,
+		.countY = sdf->countY,
+		.countZ = sdf->countZ,
+	};
+	b3SDFBuildTriangle candidates[12];
+	int candidateCount = b3SDFBuildCell( &source, x, y, z, candidates );
+	int count = 0;
+	for ( int i = 0; i < candidateCount; ++i )
+	{
+		b3SDFBuildTriangle candidate = candidates[i];
+
+		// A surface exactly on a cell boundary belongs to the adjacent cell with
+		// the lower index. This avoids duplicate triangles without a global sort.
+		b3Vec3 lower = b3SDFGridPoint( &source, x, y, z );
+		bool onLowerX = x > 0 && candidate.vertices[0].x == lower.x && candidate.vertices[1].x == lower.x &&
+						candidate.vertices[2].x == lower.x;
+		bool onLowerY = y > 0 && candidate.vertices[0].y == lower.y && candidate.vertices[1].y == lower.y &&
+						candidate.vertices[2].y == lower.y;
+		bool onLowerZ = z > 0 && candidate.vertices[0].z == lower.z && candidate.vertices[1].z == lower.z &&
+						candidate.vertices[2].z == lower.z;
+		if ( onLowerX || onLowerY || onLowerZ )
+		{
+			continue;
+		}
+
+		bool duplicate = false;
+		for ( int j = 0; j < count; ++j )
+		{
+			if ( b3SameSDFTriangleGeometry( triangles + j, &candidate ) )
+			{
+				duplicate = true;
+				break;
+			}
+		}
+		if ( duplicate == false )
+		{
+			triangles[count++] = candidate;
+		}
+	}
+	return count;
+}
+
+static int b3SDFVertexId( b3Vec3 vertex )
+{
+	// Canonicalize signed zero so geometrically shared vertices receive the same key.
+	vertex.x = vertex.x == 0.0f ? 0.0f : vertex.x;
+	vertex.y = vertex.y == 0.0f ? 0.0f : vertex.y;
+	vertex.z = vertex.z == 0.0f ? 0.0f : vertex.z;
+	uint32_t hash = b3Hash( B3_HASH_INIT, (const uint8_t*)&vertex, sizeof( vertex ) );
+	return (int)( hash & INT_MAX );
+}
+
+int b3GetSDFCellTriangles( const b3SDFData* sdf, int cellIndex, b3Triangle output[12] )
+{
+	int cellsX = sdf->countX - 1;
+	int cellsY = sdf->countY - 1;
+	int cellCount = cellsX * cellsY * ( sdf->countZ - 1 );
+	B3_ASSERT( 0 <= cellIndex && cellIndex < cellCount );
+	if ( cellIndex < 0 || cellIndex >= cellCount )
+	{
+		return 0;
+	}
+	int x = cellIndex % cellsX;
+	int yz = cellIndex / cellsX;
+	int y = yz % cellsY;
+	int z = yz / cellsY;
+	b3SDFBuildTriangle triangles[12];
+	int count = b3BuildSDFCellUnique( sdf, x, y, z, triangles );
+	for ( int i = 0; i < count; ++i )
+	{
+		b3SDFBuildTriangle triangle = triangles[i];
+		output[i] = (b3Triangle){
+			.vertices = { triangle.vertices[0], triangle.vertices[1], triangle.vertices[2] },
+			.i1 = b3SDFVertexId( triangle.vertices[0] ),
+			.i2 = b3SDFVertexId( triangle.vertices[1] ),
+			.i3 = b3SDFVertexId( triangle.vertices[2] ),
+			.flags = 0,
+		};
+	}
+	return count;
 }
 
 void b3QuerySDF( const b3SDFData* sdf, b3AABB bounds, b3MeshQueryFcn* fcn, void* context )
 {
-	const b3MeshData* meshData = b3GetSDFMesh( sdf );
-	if ( meshData == NULL )
+	if ( b3AABB_Overlaps( bounds, sdf->aabb ) == false )
 	{
 		return;
 	}
 
-	b3Mesh mesh = { meshData, b3Vec3_one };
-	b3QueryMesh( &mesh, bounds, fcn, context );
+	b3Vec3 d1 = b3Sub( bounds.lowerBound, sdf->origin );
+	b3Vec3 d2 = b3Sub( bounds.upperBound, sdf->origin );
+	b3Vec3 q1 = { d1.x / sdf->spacing.x, d1.y / sdf->spacing.y, d1.z / sdf->spacing.z };
+	b3Vec3 q2 = { d2.x / sdf->spacing.x, d2.y / sdf->spacing.y, d2.z / sdf->spacing.z };
+	// Include the cell immediately below the lower bound. A zero surface that
+	// lies exactly on a cell boundary is owned by that lower cell.
+	int minX = b3ClampInt( (int)floorf( q1.x ) - 1, 0, sdf->countX - 2 );
+	int minY = b3ClampInt( (int)floorf( q1.y ) - 1, 0, sdf->countY - 2 );
+	int minZ = b3ClampInt( (int)floorf( q1.z ) - 1, 0, sdf->countZ - 2 );
+	int maxX = b3ClampInt( (int)floorf( q2.x ), 0, sdf->countX - 2 );
+	int maxY = b3ClampInt( (int)floorf( q2.y ), 0, sdf->countY - 2 );
+	int maxZ = b3ClampInt( (int)floorf( q2.z ), 0, sdf->countZ - 2 );
+	int cellsX = sdf->countX - 1;
+	int cellsY = sdf->countY - 1;
+
+	for ( int z = minZ; z <= maxZ; ++z )
+	{
+		for ( int y = minY; y <= maxY; ++y )
+		{
+			for ( int x = minX; x <= maxX; ++x )
+			{
+				b3SDFBuildTriangle triangles[12];
+				int count = b3BuildSDFCellUnique( sdf, x, y, z, triangles );
+				int cellIndex = x + cellsX * ( y + cellsY * z );
+				for ( int i = 0; i < count; ++i )
+				{
+					b3Vec3 a = triangles[i].vertices[0];
+					b3Vec3 b = triangles[i].vertices[1];
+					b3Vec3 c = triangles[i].vertices[2];
+					b3AABB triangleBounds = { b3Min( a, b3Min( b, c ) ), b3Max( a, b3Max( b, c ) ) };
+					if ( b3AABB_Overlaps( bounds, triangleBounds ) && fcn( a, b, c, 12 * cellIndex + i, context ) == false )
+					{
+						return;
+					}
+				}
+			}
+		}
+	}
 }
 
 int b3CollideMoverAndSDF( b3PlaneResult* planes, int capacity, const b3SDFData* shape, const b3Capsule* mover )
@@ -541,12 +671,18 @@ int b3CollideMoverAndSDF( b3PlaneResult* planes, int capacity, const b3SDFData* 
 		return 0;
 	}
 
-	const b3MeshData* meshData = b3GetSDFMesh( shape );
-	if ( meshData == NULL )
-	{
-		return 0;
-	}
-
-	b3Mesh mesh = { meshData, b3Vec3_one };
-	return b3CollideMoverAndMesh( planes, capacity, &mesh, mover );
+	b3SDFMoverContext context = {
+		.planes = planes,
+		.capacity = capacity,
+		.input =
+			{
+				.proxyB = { &mover->center1, 2, 0.0f },
+				.transform = b3Transform_identity,
+				.useRadii = false,
+			},
+		.radius = mover->radius,
+	};
+	b3AABB bounds = b3MakeAABB( &mover->center1, 2, mover->radius );
+	b3QuerySDF( shape, bounds, b3SDFMoverFcn, &context );
+	return context.count;
 }

@@ -437,17 +437,6 @@ B3_INLINE const float* b3GetSDFDistances( const b3SDFData* sdf )
 	return (const float*)( (intptr_t)sdf + sdf->distancesOffset );
 }
 
-/// Get the read-only indexed zero-isosurface mesh, or NULL when the field has no surface.
-B3_INLINE const b3MeshData* b3GetSDFMesh( const b3SDFData* sdf )
-{
-	if ( sdf->meshOffset == 0 )
-	{
-		return NULL;
-	}
-
-	return (const b3MeshData*)( (intptr_t)sdf + sdf->meshOffset );
-}
-
 /// Create a generic sampled signed-distance field.
 B3_API b3SDFData* b3CreateSDF( const b3SDFDef* data );
 
@@ -631,7 +620,7 @@ B3_API void b3QueryMesh( const b3Mesh* mesh, const b3AABB bounds, b3MeshQueryFcn
 /// @param context the context sent to the user function.
 B3_API void b3QueryHeightField( const b3HeightFieldData* heightField, b3AABB bounds, b3MeshQueryFcn* fcn, void* context );
 
-/// Query an SDF for baked surface triangles overlapping a bounding box in local space.
+/// Query an SDF for zero-surface triangles generated from overlapping grid cells.
 B3_API void b3QuerySDF( const b3SDFData* sdf, b3AABB bounds, b3MeshQueryFcn* fcn, void* context );
 
 /// Compute the closest points between two shapes represented as point clouds.

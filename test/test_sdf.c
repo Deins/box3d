@@ -11,6 +11,22 @@
 #include <math.h>
 #include <stdlib.h>
 
+typedef struct SDFQueryContext
+{
+	int count;
+	bool nonDegenerate;
+} SDFQueryContext;
+
+static bool CountSDFTriangle( b3Vec3 a, b3Vec3 b, b3Vec3 c, int triangleIndex, void* rawContext )
+{
+	(void)triangleIndex;
+	SDFQueryContext* context = rawContext;
+	b3Vec3 normal = b3Cross( b3Sub( b, a ), b3Sub( c, a ) );
+	context->nonDegenerate = context->nonDegenerate && b3LengthSquared( normal ) > FLT_EPSILON * FLT_EPSILON;
+	context->count += 1;
+	return true;
+}
+
 static b3SDFData* MakeBoxSDF( void )
 {
 	const int count = 9;
@@ -51,14 +67,13 @@ static int SDFCreateAndQuery( void )
 	b3SDFData* sdf = MakeBoxSDF();
 	ENSURE( sdf != NULL );
 	ENSURE( sdf->version == B3_SDF_VERSION );
-	ENSURE( sdf->triangleCount > 0 );
-	const b3MeshData* mesh = b3GetSDFMesh( sdf );
-	ENSURE( mesh != NULL );
-	ENSURE( mesh->triangleCount == sdf->triangleCount );
-	ENSURE( mesh->vertexCount < 3 * mesh->triangleCount );
-	ENSURE( mesh->nodeCount > 1 );
-	ENSURE_SMALL( sdf->aabb.lowerBound.x + 2.0f, FLT_EPSILON );
-	ENSURE_SMALL( sdf->aabb.upperBound.z - 2.0f, FLT_EPSILON );
+	ENSURE( sdf->byteCount < 4096 );
+	SDFQueryContext query = { .nonDegenerate = true };
+	b3QuerySDF( sdf, sdf->aabb, CountSDFTriangle, &query );
+	ENSURE( query.count > 0 );
+	ENSURE( query.nonDegenerate );
+	ENSURE_SMALL( sdf->aabb.lowerBound.x + 1.0f, FLT_EPSILON );
+	ENSURE_SMALL( sdf->aabb.upperBound.z - 1.0f, FLT_EPSILON );
 
 	b3Vec3 inside = { 0.0f, 0.0f, 0.0f };
 	b3ShapeProxy insideProxy = { &inside, 1, 0.0f };
@@ -73,6 +88,15 @@ static int SDFCreateAndQuery( void )
 	ray.translation = (b3Vec3){ 0.0f, -4.0f, 0.0f };
 	ray.maxFraction = 1.0f;
 	b3CastOutput hit = b3RayCastSDF( sdf, &ray );
+	ENSURE( hit.hit );
+	ENSURE( hit.fraction > 0.0f && hit.fraction < 1.0f );
+
+	b3Vec3 castPoint = { 0.0f, 2.0f, 0.0f };
+	b3ShapeCastInput shapeCast = { 0 };
+	shapeCast.proxy = (b3ShapeProxy){ &castPoint, 1, 0.25f };
+	shapeCast.translation = (b3Vec3){ 0.0f, -4.0f, 0.0f };
+	shapeCast.maxFraction = 1.0f;
+	hit = b3ShapeCastSDF( sdf, &shapeCast );
 	ENSURE( hit.hit );
 	ENSURE( hit.fraction > 0.0f && hit.fraction < 1.0f );
 
@@ -94,18 +118,10 @@ static int SDFExactZeroSamples( void )
 
 	b3SDFData* sdf = b3CreateSDF( &def );
 	ENSURE( sdf != NULL );
-	const b3MeshData* mesh = b3GetSDFMesh( sdf );
-	ENSURE( mesh != NULL );
-
-	const b3MeshTriangle* triangles = b3GetMeshTriangles( mesh );
-	const b3Vec3* vertices = b3GetMeshVertices( mesh );
-	for ( int i = 0; i < mesh->triangleCount; ++i )
-	{
-		b3MeshTriangle triangle = triangles[i];
-		b3Vec3 normal = b3Cross( b3Sub( vertices[triangle.index2], vertices[triangle.index1] ),
-			b3Sub( vertices[triangle.index3], vertices[triangle.index1] ) );
-		ENSURE( b3LengthSquared( normal ) > FLT_EPSILON * FLT_EPSILON );
-	}
+	SDFQueryContext query = { .nonDegenerate = true };
+	b3QuerySDF( sdf, sdf->aabb, CountSDFTriangle, &query );
+	ENSURE( query.count > 0 );
+	ENSURE( query.nonDegenerate );
 
 	b3DestroySDF( sdf );
 
@@ -114,7 +130,13 @@ static int SDFExactZeroSamples( void )
 	def.distances = faceDistances;
 	sdf = b3CreateSDF( &def );
 	ENSURE( sdf != NULL );
-	ENSURE( sdf->triangleCount == 1 );
+	query = (SDFQueryContext){ .nonDegenerate = true };
+	b3QuerySDF( sdf, sdf->aabb, CountSDFTriangle, &query );
+	ENSURE( query.count == 1 );
+	query = (SDFQueryContext){ .nonDegenerate = true };
+	b3AABB faceBounds = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 0.0f } };
+	b3QuerySDF( sdf, faceBounds, CountSDFTriangle, &query );
+	ENSURE( query.count == 1 );
 	b3DestroySDF( sdf );
 	return 0;
 }

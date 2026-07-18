@@ -219,10 +219,9 @@ b3DestroyHeightField(hf);
 ### Signed-Distance Fields
 
 Signed-distance fields describe a regular 3D sample grid. Samples must be negative
-inside the solid and positive outside it. SDF shapes are static-only. Box3D bakes
-the zero isosurface into a welded, indexed mesh with a collision BVH when the field
-is created, while retaining the samples for volumetric point and proxy overlap tests.
-The baked mesh is available through `b3GetSDFMesh`:
+inside the solid and positive outside it. SDF shapes are static-only. Box3D stores
+the samples directly. Collision queries generate zero-surface triangles only for
+the grid cells touched by the query, so creation does not bake a mesh or BVH:
 
 ```c
 float distances[countX * countY * countZ];
@@ -236,15 +235,18 @@ def.countY    = countY;
 def.countZ    = countZ;
 
 b3SDFData* sdf = b3CreateSDF(&def);
-const b3MeshData* surface = b3GetSDFMesh(sdf);
 b3ShapeId id = b3CreateSDFShape(bodyId, &shapeDef, sdf);
 ```
 
 The sampled field uses x-major indexing:
 `x + countX * (y + countY * z)`. The field bounds are the sample-grid bounds;
 make sure the grid includes a positive-distance margin around the solid. SDF
-ray casts and shape casts operate on the baked zero surface, while overlap tests
-also recognize queries fully inside the negative region. Destroy the SDF after
+ray casts, shape casts, and contacts sample the relevant cells at runtime. Overlap
+tests also recognize queries fully inside the negative region. Localized queries
+are proportional to the number of overlapped cells; a query spanning the whole
+grid visits the whole grid. The broad-phase bounds are derived from non-positive
+samples and their adjacent cells, so positive padding does not enlarge the shape's
+broad-phase proxy. Destroy the SDF after
 destroying the shape that references it:
 
 ```c

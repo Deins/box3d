@@ -589,6 +589,9 @@ bool b3ComputeMeshManifolds( b3World* world, int workerIndex, b3Contact* contact
 	int manifoldCount = 0;
 
 	b3TriangleCache* triangleCaches = meshContact->triangleCache.data;
+	b3Triangle sdfTriangles[12];
+	int sdfCellIndex = B3_NULL_INDEX;
+	int sdfTriangleCount = 0;
 
 	const b3HullData* hullB = shapeB->type == b3_hullShape ? shapeB->hull : NULL;
 
@@ -608,10 +611,19 @@ bool b3ComputeMeshManifolds( b3World* world, int workerIndex, b3Contact* contact
 		else
 		{
 			B3_ASSERT( shapeA->type == b3_sdfShape );
-			const b3MeshData* meshData = b3GetSDFMesh( shapeA->sdf );
-			B3_ASSERT( meshData != NULL );
-			b3Mesh mesh = { meshData, b3Vec3_one };
-			triangle = b3GetMeshTriangle( &mesh, triangleIndex );
+			int cellIndex = triangleIndex / 12;
+			if ( cellIndex != sdfCellIndex )
+			{
+				sdfCellIndex = cellIndex;
+				sdfTriangleCount = b3GetSDFCellTriangles( shapeA->sdf, cellIndex, sdfTriangles );
+			}
+			int localIndex = triangleIndex % 12;
+			B3_ASSERT( 0 <= localIndex && localIndex < sdfTriangleCount );
+			if ( localIndex < 0 || localIndex >= sdfTriangleCount )
+			{
+				continue;
+			}
+			triangle = sdfTriangles[localIndex];
 		}
 
 		// Transform triangle into the shape frame
