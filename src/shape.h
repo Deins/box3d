@@ -115,6 +115,7 @@ int b3CollideMoverAndHull( b3PlaneResult* result, const b3HullData* shape, const
 int b3CollideMoverAndMesh( b3PlaneResult* planes, int capacity, const b3Mesh* shape, const b3Capsule* mover );
 int b3CollideMoverAndHeightField( b3PlaneResult* results, int capacity, const b3HeightFieldData* shape, const b3Capsule* mover );
 int b3CollideMoverAndSDF( b3PlaneResult* results, int capacity, const b3SDFData* shape, const b3Capsule* mover );
+int b3GetSDFCellTriangles( const b3SDFData* sdf, int cellIndex, b3Triangle triangles[12] );
 int b3CollideMover( b3PlaneResult* planes, int planeCapacity, const b3Shape* shape, b3Transform transform,
 					const b3Capsule* mover );
 

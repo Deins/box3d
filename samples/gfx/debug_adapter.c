@@ -653,7 +653,7 @@ static void* AdapterCreateDebugShape( const b3DebugShape* debugShape, void* cont
 			return NULL;
 		}
 		DebugShape* us = &s_adapter.pool[index];
-		// The renderer consumes the baked zero-isosurface as a regular mesh.
+		// The renderer generates the zero-isosurface from the sampled cells once for display.
 		us->kind = Box3DUS_Mesh;
 		PopulateCommonFields( us, debugShape );
 		us->geom.handle = handle;
