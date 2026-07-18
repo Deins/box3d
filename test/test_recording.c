@@ -1148,6 +1148,29 @@ static int AllOps( void )
 	b3ShapeDef compoundShapeDef = b3DefaultShapeDef();
 	b3CreateBakedCompoundShape( compoundBodyId, &compoundShapeDef, compound );
 
+	b3BodyDef sdfBodyDef = b3DefaultBodyDef();
+	sdfBodyDef.type = b3_staticBody;
+	sdfBodyDef.position = (b3Pos){ 40.0f, 0.0f, 0.0f };
+	b3BodyId sdfBodyId = b3CreateBody( worldId, &sdfBodyDef );
+	float sdfDistances[27];
+	for ( int i = 0; i < 27; ++i )
+	{
+		sdfDistances[i] = 1.0f;
+	}
+	sdfDistances[13] = -1.0f;
+	b3SDFDef sdfDef = { 0 };
+	sdfDef.distances = sdfDistances;
+	sdfDef.origin = (b3Vec3){ -1.0f, -1.0f, -1.0f };
+	sdfDef.spacing = b3Vec3_one;
+	sdfDef.countX = 3;
+	sdfDef.countY = 3;
+	sdfDef.countZ = 3;
+	b3SDFData* sdf = b3CreateSDF( &sdfDef );
+	ENSURE( sdf != NULL );
+	b3ShapeDef sdfShapeDef = b3DefaultShapeDef();
+	b3ShapeId sdfShapeId = b3CreateSDFShape( sdfBodyId, &sdfShapeDef, sdf );
+	ENSURE( b3Shape_IsValid( sdfShapeId ) );
+
 	// Throwaway shape to exercise DestroyShape
 	b3Sphere tmpSphere = { { 0.0f, 0.0f, 0.0f }, 0.1f };
 	b3ShapeId tmpShapeId = b3CreateSphereShape( capsuleBodyId, &capsuleShapeDef, &tmpSphere );
@@ -1467,6 +1490,7 @@ static int AllOps( void )
 	b3DestroyMesh( swapMeshData );
 	b3DestroyHeightField( hf );
 	b3DestroyCompound( compound );
+	b3DestroySDF( sdf );
 
 	const uint8_t* recData = b3Recording_GetData( rec );
 	int recSize = b3Recording_GetSize( rec );

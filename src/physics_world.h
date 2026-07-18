@@ -323,7 +323,14 @@ static inline b3Manifold* b3AllocateManifolds( b3World* world, int count )
 	int currentCount = world->manifoldAllocators.count;
 	for ( int i = currentCount; i < count; ++i )
 	{
-		b3BlockAllocator allocator = b3CreateBlockAllocator( ( i + 1 ) * sizeof( b3Manifold ), 2 * B3_BLOCK_SIZE );
+		int elementSize = ( i + 1 ) * sizeof( b3Manifold );
+		int alignment = (int)_Alignof( void* );
+		if ( _Alignof( b3Manifold ) > alignment )
+		{
+			alignment = _Alignof( b3Manifold );
+		}
+		elementSize = ( ( elementSize + alignment - 1 ) / alignment ) * alignment;
+		b3BlockAllocator allocator = b3CreateBlockAllocator( elementSize, 2 * B3_BLOCK_SIZE );
 		b3Array_Push( world->manifoldAllocators, allocator );
 	}
 
@@ -347,4 +354,3 @@ static inline void b3FreeManifolds( b3World* world, b3Manifold* manifolds, int c
 	b3FreeElement( allocator, manifolds );
 	b3UnlockMutex( world->manifoldAllocatorMutex );
 }
-

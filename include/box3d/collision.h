@@ -422,6 +422,41 @@ B3_API b3HeightFieldData* b3LoadHeightField( const char* fileName );
 /**@}*/ // height_field
 
 /**
+ * @addtogroup sdf
+ * @{
+ */
+
+/// Get read-only SDF samples in x-major order.
+B3_INLINE const float* b3GetSDFDistances( const b3SDFData* sdf )
+{
+	if ( sdf->distancesOffset == 0 )
+	{
+		return NULL;
+	}
+
+	return (const float*)( (intptr_t)sdf + sdf->distancesOffset );
+}
+
+/// Get the read-only indexed zero-isosurface mesh, or NULL when the field has no surface.
+B3_INLINE const b3MeshData* b3GetSDFMesh( const b3SDFData* sdf )
+{
+	if ( sdf->meshOffset == 0 )
+	{
+		return NULL;
+	}
+
+	return (const b3MeshData*)( (intptr_t)sdf + sdf->meshOffset );
+}
+
+/// Create a generic sampled signed-distance field.
+B3_API b3SDFData* b3CreateSDF( const b3SDFDef* data );
+
+/// Destroy an SDF.
+B3_API void b3DestroySDF( b3SDFData* sdf );
+
+/**@}*/ // sdf
+
+/**
  * @addtogroup compound
  * @{
  */
@@ -492,6 +527,9 @@ B3_API b3AABB b3ComputeMeshAABB( const b3MeshData* shape, b3Transform transform,
 /// Compute the bounding box of a transformed height-field
 B3_API b3AABB b3ComputeHeightFieldAABB( const b3HeightFieldData* shape, b3Transform transform );
 
+/// Compute the bounding box of a transformed signed-distance field.
+B3_API b3AABB b3ComputeSDFAABB( const b3SDFData* shape, b3Transform transform );
+
 /// Compute the bounding box of a compound
 B3_API b3AABB b3ComputeCompoundAABB( const b3CompoundData* shape, b3Transform transform );
 
@@ -513,6 +551,9 @@ B3_API bool b3OverlapCompound( const b3CompoundData* shape, b3Transform shapeTra
 
 /// Overlap shape versus height field
 B3_API bool b3OverlapHeightField( const b3HeightFieldData* shape, b3Transform shapeTransform, const b3ShapeProxy* proxy );
+
+/// Overlap shape versus signed-distance field.
+B3_API bool b3OverlapSDF( const b3SDFData* shape, b3Transform shapeTransform, const b3ShapeProxy* proxy );
 
 /// Overlap shape versus hull
 B3_API bool b3OverlapHull( const b3HullData* shape, b3Transform shapeTransform, const b3ShapeProxy* proxy );
@@ -549,6 +590,9 @@ B3_API b3CastOutput b3RayCastMesh( const b3Mesh* shape, const b3RayCastInput* in
 /// Ray cast versus height field in local space. A thin surface with no interior, so there is no overlap case.
 B3_API b3CastOutput b3RayCastHeightField( const b3HeightFieldData* shape, const b3RayCastInput* input );
 
+/// Ray cast versus signed-distance field.
+B3_API b3CastOutput b3RayCastSDF( const b3SDFData* shape, const b3RayCastInput* input );
+
 /// Shape cast versus a sphere. Initial overlap is treated as a miss.
 B3_API b3CastOutput b3ShapeCastSphere( const b3Sphere* shape, const b3ShapeCastInput* input );
 
@@ -567,6 +611,9 @@ B3_API b3CastOutput b3ShapeCastMesh( const b3Mesh* shape, const b3ShapeCastInput
 /// Shape cast versus a height field. Initial overlap is treated as a miss.
 B3_API b3CastOutput b3ShapeCastHeightField( const b3HeightFieldData* shape, const b3ShapeCastInput* input );
 
+/// Shape cast versus signed-distance field.
+B3_API b3CastOutput b3ShapeCastSDF( const b3SDFData* shape, const b3ShapeCastInput* input );
+
 /// Query callback.
 typedef bool b3MeshQueryFcn( b3Vec3 a, b3Vec3 b, b3Vec3 c, int triangleIndex, void* context );
 
@@ -583,6 +630,9 @@ B3_API void b3QueryMesh( const b3Mesh* mesh, const b3AABB bounds, b3MeshQueryFcn
 /// @param fcn a user function to collect triangles
 /// @param context the context sent to the user function.
 B3_API void b3QueryHeightField( const b3HeightFieldData* heightField, b3AABB bounds, b3MeshQueryFcn* fcn, void* context );
+
+/// Query an SDF for baked surface triangles overlapping a bounding box in local space.
+B3_API void b3QuerySDF( const b3SDFData* sdf, b3AABB bounds, b3MeshQueryFcn* fcn, void* context );
 
 /// Compute the closest points between two shapes represented as point clouds.
 /// b3SimplexCache cache is input/output. On the first call set b3SimplexCache.count to zero.

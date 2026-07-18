@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // Box3D -> gfx geometry-registry bridge for shapes with intrinsic
-// topology (hulls, triangle meshes, heightfields).
+// topology (hulls, triangle meshes, heightfields, SDF surfaces).
 //
 // Each Acquire* function checks the registry for an existing entry under
 // the Box3D struct's `hash` field (computed by Box3D at construction) and,
@@ -44,6 +44,10 @@ MeshHandle FindOrAddMesh( const b3MeshData* meshData );
 // different scales hash to different entries, per-instance scale stays
 // at (1, 1, 1) for heightfield draws.
 MeshHandle FindOrAddHeightField( const b3HeightFieldData* heightField );
+
+// Acquire for a baked signed-distance field surface. The embedded mesh hash is
+// used so fields with identical zero surfaces can share renderer geometry.
+MeshHandle FindOrAddSDF( const b3SDFData* sdf );
 
 #ifdef __cplusplus
 } // extern "C"

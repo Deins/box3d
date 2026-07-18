@@ -145,7 +145,7 @@ Current limitations:
 6. Constraint resolution uses an iterative Gauss-Seidel solver for real-time
    performance. Collisions are not perfectly rigid and contacts are not
    pixel-accurate. More sub-steps tighten the result.
-7. Mesh and height-field shapes are static-only. They do not participate in
+7. Mesh, height-field, and SDF shapes are static-only. They do not participate in
    dynamic-versus-dynamic contact.
 8. The compound shape type is static-body only and immutable after creation.
 9. The character mover API is experimental.

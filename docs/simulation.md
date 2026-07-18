@@ -665,7 +665,7 @@ Shapes hold the following:
 
 These are described in the following sections.
 
-The geometry types (sphere, capsule, hull, mesh, height field) are documented in detail in
+The geometry types (sphere, capsule, hull, mesh, height field, SDF) are documented in detail in
 `collision.md`. Compound shapes are documented in `compound.md`. This section covers the
 shape lifecycle and material properties.
 
