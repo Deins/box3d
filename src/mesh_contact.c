@@ -74,9 +74,21 @@ static int b3QueryHeightFieldTriangles( int* indices, int capacity, const b3Heig
 	return context.count;
 }
 
+static int b3QuerySDFTriangles( int* indices, int capacity, const b3SDFData* sdf, b3AABB bounds )
+{
+	b3TriangleQueryContext context = {
+		.indices = indices,
+		.capacity = capacity,
+		.count = 0,
+	};
+
+	b3QuerySDF( sdf, bounds, b3CollectTriangleIndicesCallback, &context );
+	return context.count;
+}
+
 static void b3RefreshCache( b3Contact* contact, const b3Shape* shapeA, b3WorldTransform xfA, const b3AABB* bounds )
 {
-	B3_ASSERT( shapeA->type == b3_meshShape || shapeA->type == b3_heightShape );
+	B3_ASSERT( shapeA->type == b3_meshShape || shapeA->type == b3_heightShape || shapeA->type == b3_sdfShape );
 
 	b3MeshContact* meshContact = &contact->meshContact;
 
@@ -115,10 +127,14 @@ static void b3RefreshCache( b3Contact* contact, const b3Shape* shapeA, b3WorldTr
 	{
 		triangleCount = b3QueryMeshTriangles( triangleIndices, triangleCapacity, &shapeA->mesh, localBounds );
 	}
+	else if ( shapeA->type == b3_heightShape )
+	{
+		triangleCount = b3QueryHeightFieldTriangles( triangleIndices, triangleCapacity, shapeA->heightField, localBounds );
+	}
 	else
 	{
-		B3_ASSERT( shapeA->type == b3_heightShape );
-		triangleCount = b3QueryHeightFieldTriangles( triangleIndices, triangleCapacity, shapeA->heightField, localBounds );
+		B3_ASSERT( shapeA->type == b3_sdfShape );
+		triangleCount = b3QuerySDFTriangles( triangleIndices, triangleCapacity, shapeA->sdf, localBounds );
 	}
 
 	if ( triangleCount == triangleCapacity )
@@ -525,7 +541,7 @@ typedef struct b3Cluster
 bool b3ComputeMeshManifolds( b3World* world, int workerIndex, b3Contact* contact, const b3Shape* shapeA, const int* materialMap,
 							 b3WorldTransform xfA, const b3Shape* shapeB, b3WorldTransform xfB, bool isFast, b3Arena arena )
 {
-	B3_ASSERT( shapeA->type == b3_meshShape || shapeA->type == b3_heightShape );
+	B3_ASSERT( shapeA->type == b3_meshShape || shapeA->type == b3_heightShape || shapeA->type == b3_sdfShape );
 	B3_UNUSED( workerIndex );
 	B3_UNUSED( isFast );
 	B3_UNUSED( materialMap );
@@ -580,15 +596,22 @@ bool b3ComputeMeshManifolds( b3World* world, int workerIndex, b3Contact* contact
 	{
 		int triangleIndex = triangleCaches[index].triangleIndex;
 
-		b3Triangle triangle;
+		b3Triangle triangle = { 0 };
 		if ( shapeA->type == b3_meshShape )
 		{
 			triangle = b3GetMeshTriangle( &shapeA->mesh, triangleIndex );
 		}
+		else if ( shapeA->type == b3_heightShape )
+		{
+			triangle = b3GetHeightFieldTriangle( shapeA->heightField, triangleIndex );
+		}
 		else
 		{
-			B3_ASSERT( shapeA->type == b3_heightShape );
-			triangle = b3GetHeightFieldTriangle( shapeA->heightField, triangleIndex );
+			B3_ASSERT( shapeA->type == b3_sdfShape );
+			const b3MeshData* meshData = b3GetSDFMesh( shapeA->sdf );
+			B3_ASSERT( meshData != NULL );
+			b3Mesh mesh = { meshData, b3Vec3_one };
+			triangle = b3GetMeshTriangle( &mesh, triangleIndex );
 		}
 
 		// Transform triangle into the shape frame
@@ -1090,7 +1113,7 @@ bool b3ComputeMeshManifolds( b3World* world, int workerIndex, b3Contact* contact
 	b3Vec3 tangentVelocityA = b3Vec3_zero;
 
 	// Update friction and restitution if the mesh has per triangle material
-	if ( shapeA->materialCount > 0 )
+	if ( shapeA->materialCount > 0 && ( shapeA->type == b3_meshShape || shapeA->type == b3_heightShape ) )
 	{
 		float friction = 0.0f;
 		float restitution = 0.0f;
@@ -1101,7 +1124,7 @@ bool b3ComputeMeshManifolds( b3World* world, int workerIndex, b3Contact* contact
 		{
 			materialIndices = b3GetMeshMaterialIndices( shapeA->mesh.data );
 		}
-		else
+		else if ( shapeA->type == b3_heightShape )
 		{
 			materialIndices = b3GetHeightFieldMaterialIndices( shapeA->heightField );
 		}
@@ -1113,7 +1136,7 @@ bool b3ComputeMeshManifolds( b3World* world, int workerIndex, b3Contact* contact
 			for ( int j = 0; j < pointCount; ++j )
 			{
 				int triangleIndex = manifold->points[j].triangleIndex;
-				int materialIndex;
+				int materialIndex = 0;
 				if ( shapeA->type == b3_meshShape )
 				{
 					materialIndex = materialIndices[triangleIndex];
@@ -1123,7 +1146,7 @@ bool b3ComputeMeshManifolds( b3World* world, int workerIndex, b3Contact* contact
 						materialIndex = materialMap[materialIndex];
 					}
 				}
-				else
+				else if ( shapeA->type == b3_heightShape )
 				{
 					materialIndex = materialIndices[triangleIndex >> 1];
 				}

@@ -450,6 +450,9 @@ typedef enum b3ShapeType
 	/// A sphere with an offset
 	b3_sphereShape,
 
+	/// A sampled signed-distance field
+	b3_sdfShape,
+
 	/// The number of shape types
 	b3_shapeTypeCount
 } b3ShapeType;
@@ -2335,6 +2338,70 @@ typedef struct b3HeightFieldData
 /**@}*/ // height_field
 
 /**
+ * @defgroup sdf Signed Distance Field
+ * @brief Static sampled signed-distance collision shape
+ * @{
+ */
+
+/// Data used to create a sampled signed-distance field. Distances are signed with
+/// negative values inside the solid and positive values outside the solid.
+typedef struct b3SDFDef
+{
+	/// Scalar samples in x-major order: x + countX * (y + countY * z).
+	float* distances;
+
+	/// Position of sample (0, 0, 0) in local space.
+	b3Vec3 origin;
+
+	/// Positive spacing between adjacent samples.
+	b3Vec3 spacing;
+
+	int countX;
+	int countY;
+	int countZ;
+} b3SDFDef;
+
+/// 64-bit SDF version. Useful for validating serialized data.
+#define B3_SDF_VERSION 0x6E82D51AA3CB4797ull
+
+/// A signed-distance field with a baked indexed zero-isosurface mesh.
+/// @note This data structure has data hanging off the end and cannot be directly copied.
+typedef struct b3SDFData
+{
+	/// Version must be first and match B3_SDF_VERSION.
+	uint64_t version;
+
+	/// Total number of bytes for this SDF.
+	int byteCount;
+
+	/// Hash of this SDF; zero while computing the hash.
+	uint32_t hash;
+
+	/// Local axis-aligned bounding box.
+	b3AABB aabb;
+
+	/// Sample grid origin and spacing.
+	b3Vec3 origin;
+	b3Vec3 spacing;
+
+	/// Number of samples along each axis.
+	int countX;
+	int countY;
+	int countZ;
+
+	/// Number of baked zero-isosurface triangles.
+	int triangleCount;
+
+	/// Offset of the float sample array from the struct address.
+	int distancesOffset;
+
+	/// Offset of the baked zero-isosurface mesh from the struct address.
+	int meshOffset;
+} b3SDFData;
+
+/**@}*/ // sdf
+
+/**
  * @defgroup compound Compound
  * @brief Compound collision shape
  * @{
@@ -2961,6 +3028,7 @@ typedef struct b3DebugShape
 		const b3Capsule* capsule;			  ///< Capsule shape.
 		const b3CompoundData* compound;		  ///< Compound shape.
 		const b3HeightFieldData* heightField; ///< Height-field shape.
+		const b3SDFData* sdf;				  ///< Signed-distance-field shape.
 		const b3HullData* hull;				  ///< Convex hull shape.
 		const b3Mesh* mesh;					  ///< Mesh shape with scale.
 		const b3Sphere* sphere;				  ///< Sphere shape.

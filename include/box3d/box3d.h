@@ -828,6 +828,12 @@ B3_API b3ShapeId b3CreateMeshShape( b3BodyId bodyId, const b3ShapeDef* def, cons
 /// @return the shape id for accessing the shape
 B3_API b3ShapeId b3CreateHeightFieldShape( b3BodyId bodyId, const b3ShapeDef* def, const b3HeightFieldData* heightField );
 
+/// Create a signed-distance-field shape and attach it to a body. The shape definition is fully cloned but
+/// the SDF is not. SDF shapes are only allowed on static bodies.
+/// @warning this holds reference to the input SDF data which must remain valid for the lifetime of this shape
+/// @return the shape id for accessing the shape
+B3_API b3ShapeId b3CreateSDFShape( b3BodyId bodyId, const b3ShapeDef* def, const b3SDFData* sdf );
+
 /// Baked compound shapes are only allowed on static bodies.
 /// Note: runtime compounds are achieved by adding multiple shapes to a body.
 /// Runtime compounds can be dynamic and/or kinematic.
@@ -958,6 +964,9 @@ B3_API b3Mesh b3Shape_GetMesh( b3ShapeId shapeId );
 
 /// Get the shape's height field. Asserts the type is correct.
 B3_API const b3HeightFieldData* b3Shape_GetHeightField( b3ShapeId shapeId );
+
+/// Get the shape's signed-distance field. Asserts the type is correct.
+B3_API const b3SDFData* b3Shape_GetSDF( b3ShapeId shapeId );
 
 /// Allows you to change a shape to be a sphere or update the current sphere.
 /// This does not modify the mass properties.

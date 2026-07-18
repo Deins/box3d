@@ -59,6 +59,7 @@ static float b3ComputeShapeMargin( b3Shape* shape )
 
 		case b3_meshShape:
 		case b3_heightShape:
+		case b3_sdfShape:
 		case b3_compoundShape:
 		{
 			// Static-only shapes: broadphase uses speculative distance for static
@@ -160,6 +161,11 @@ static b3Shape* b3CreateShapeInternal( b3World* world, b3Body* body, b3WorldTran
 
 		case b3_heightShape:
 			shape->heightField = (b3HeightFieldData*)geometry;
+			break;
+
+		case b3_sdfShape:
+			B3_ASSERT( body->type == b3_staticBody );
+			shape->sdf = (b3SDFData*)geometry;
 			break;
 
 		default:
@@ -273,7 +279,8 @@ static b3ShapeId b3CreateShape( b3BodyId bodyId, const b3ShapeDef* def, const vo
 	}
 
 	b3Body* body = b3GetBodyFullId( world, bodyId );
-	if ( body->type != b3_staticBody && ( shapeType == b3_compoundShape || shapeType == b3_heightShape ) )
+	if ( body->type != b3_staticBody &&
+		 ( shapeType == b3_compoundShape || shapeType == b3_heightShape || shapeType == b3_sdfShape ) )
 	{
 		// Compound and height shapes must be on static bodies.
 		return b3_nullShapeId;
@@ -419,6 +426,24 @@ b3ShapeId b3CreateHeightFieldShape( b3BodyId bodyId, const b3ShapeDef* def, cons
 			uint32_t geometryId = b3RecInternHeightField( world->recording, heightField );
 			b3RecArgs_CreateHeightFieldShape createArgs = { bodyId, *def, geometryId };
 			b3RecWriteRet_CreateHeightFieldShape( world->recording, &createArgs, shapeId );
+		}
+	}
+	return shapeId;
+}
+
+b3ShapeId b3CreateSDFShape( b3BodyId bodyId, const b3ShapeDef* def, const b3SDFData* sdf )
+{
+	B3_VALIDATE( sdf != NULL && sdf->version == B3_SDF_VERSION );
+	B3_VALIDATE( sdf->hash != 0 );
+	b3ShapeId shapeId = b3CreateShape( bodyId, def, sdf, b3_sdfShape, b3Transform_identity, b3Vec3_one, false );
+	if ( shapeId.index1 != 0 )
+	{
+		b3World* world = b3GetUnlockedWorld( bodyId.world0 );
+		if ( world != NULL && world->recording != NULL )
+		{
+			uint32_t geometryId = b3RecInternSDF( world->recording, sdf );
+			b3RecArgs_CreateSDFShape createArgs = { bodyId, *def, geometryId };
+			b3RecWriteRet_CreateSDFShape( world->recording, &createArgs, shapeId );
 		}
 	}
 	return shapeId;
@@ -574,6 +599,9 @@ b3AABB b3ComputeShapeAABB( const b3Shape* shape, b3Transform transform )
 		case b3_heightShape:
 			return b3ComputeHeightFieldAABB( shape->heightField, transform );
 
+		case b3_sdfShape:
+			return b3ComputeSDFAABB( shape->sdf, transform );
+
 		case b3_hullShape:
 			return b3ComputeHullAABB( shape->hull, transform );
 
@@ -658,6 +686,11 @@ b3Vec3 b3GetShapeCentroid( const b3Shape* shape )
 		case b3_heightShape:
 		{
 			b3AABB aabb = b3ComputeHeightFieldAABB( shape->heightField, b3Transform_identity );
+			return b3AABB_Center( aabb );
+		}
+		case b3_sdfShape:
+		{
+			b3AABB aabb = b3ComputeSDFAABB( shape->sdf, b3Transform_identity );
 			return b3AABB_Center( aabb );
 		}
 		default:
@@ -784,6 +817,17 @@ b3ShapeExtent b3ComputeShapeExtent( const b3Shape* shape, b3Vec3 localCenter )
 		}
 		break;
 
+		case b3_sdfShape:
+		{
+			b3AABB aabb = b3ComputeSDFAABB( shape->sdf, b3Transform_identity );
+			float r1 = b3Length( b3Sub( aabb.lowerBound, localCenter ) );
+			float r2 = b3Length( b3Sub( aabb.upperBound, localCenter ) );
+			extent.minExtent = b3MinFloat( r1, r2 );
+			b3Vec3 p = b3FarthestPointOnAABB( aabb, localCenter );
+			extent.maxExtent = b3Abs( b3Sub( p, localCenter ) );
+		}
+		break;
+
 		default:
 			break;
 	}
@@ -817,6 +861,9 @@ b3CastOutput b3RayCastShape( const b3Shape* shape, b3Transform transform, const 
 			break;
 		case b3_heightShape:
 			output = b3RayCastHeightField( shape->heightField, &localInput );
+			break;
+		case b3_sdfShape:
+			output = b3RayCastSDF( shape->sdf, &localInput );
 			break;
 		default:
 			return output;
@@ -855,6 +902,9 @@ b3CastOutput b3ShapeCastShape( const b3Shape* shape, b3Transform transform, cons
 		case b3_heightShape:
 			output = b3ShapeCastHeightField( shape->heightField, &localInput );
 			break;
+		case b3_sdfShape:
+			output = b3ShapeCastSDF( shape->sdf, &localInput );
+			break;
 
 		case b3_hullShape:
 			output = b3ShapeCastHull( shape->hull, &localInput );
@@ -889,6 +939,9 @@ bool b3OverlapShape( const b3Shape* shape, b3Transform transform, const b3ShapeP
 
 		case b3_heightShape:
 			return b3OverlapHeightField( shape->heightField, transform, proxy );
+
+		case b3_sdfShape:
+			return b3OverlapSDF( shape->sdf, transform, proxy );
 
 		case b3_hullShape:
 			return b3OverlapHull( shape->hull, transform, proxy );
@@ -969,6 +1022,10 @@ int b3CollideMover( b3PlaneResult* planes, int planeCapacity, const b3Shape* sha
 
 		case b3_heightShape:
 			planeCount = b3CollideMoverAndHeightField( planes, planeCapacity, shape->heightField, &localMover );
+			break;
+
+		case b3_sdfShape:
+			planeCount = b3CollideMoverAndSDF( planes, planeCapacity, shape->sdf, &localMover );
 			break;
 
 		default:
@@ -1530,6 +1587,14 @@ const b3HeightFieldData* b3Shape_GetHeightField( b3ShapeId shapeId )
 	b3Shape* shape = b3GetShape( world, shapeId );
 	B3_ASSERT( shape->type == b3_heightShape );
 	return shape->heightField;
+}
+
+const b3SDFData* b3Shape_GetSDF( b3ShapeId shapeId )
+{
+	b3World* world = b3GetWorld( shapeId.world0 );
+	b3Shape* shape = b3GetShape( world, shapeId );
+	B3_ASSERT( shape->type == b3_sdfShape );
+	return shape->sdf;
 }
 
 void b3Shape_SetSphere( b3ShapeId shapeId, const b3Sphere* sphere )
@@ -2268,7 +2333,7 @@ b3TOIOutput b3ShapeTimeOfImpact( b3Shape* shapeA, b3Shape* shapeB, b3Sweep* swee
 		return context.toiOutput;
 	}
 
-	if ( typeA == b3_heightShape || typeA == b3_meshShape )
+	if ( typeA == b3_heightShape || typeA == b3_meshShape || typeA == b3_sdfShape )
 	{
 		// todo implement b3MeshTimeOfImpact and b3HeightFieldTimeOfImpact
 		// Note: assuming mesh is static
@@ -2323,6 +2388,10 @@ b3TOIOutput b3ShapeTimeOfImpact( b3Shape* shapeA, b3Shape* shapeB, b3Sweep* swee
 		{
 			b3QueryHeightField( shapeA->heightField, localBounds, b3MeshTimeOfImpactFcn, &context );
 		}
+		else if ( typeA == b3_sdfShape )
+		{
+			b3QuerySDF( shapeA->sdf, localBounds, b3MeshTimeOfImpactFcn, &context );
+		}
 
 		float ms = b3GetMilliseconds( ticks );
 		if ( ms > 1000.0f * b3GetStallThreshold() )
@@ -2333,7 +2402,8 @@ b3TOIOutput b3ShapeTimeOfImpact( b3Shape* shapeA, b3Shape* shapeB, b3Sweep* swee
 		return context.toiOutput;
 	}
 
-	B3_ASSERT( shapeB->type != b3_compoundShape && shapeB->type != b3_meshShape && shapeB->type != b3_heightShape );
+	B3_ASSERT( shapeB->type != b3_compoundShape && shapeB->type != b3_meshShape && shapeB->type != b3_heightShape &&
+			   shapeB->type != b3_sdfShape );
 
 	b3TOIInput input;
 	input.proxyA = b3MakeShapeProxy( shapeA );

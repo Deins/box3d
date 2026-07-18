@@ -789,6 +789,18 @@ static MeshHandle BuildHeightField( const b3HeightFieldData* hf )
 	return h;
 }
 
+static MeshHandle BuildSDF( const b3SDFData* sdf )
+{
+	const b3MeshData* meshData = b3GetSDFMesh( sdf );
+	if ( meshData == NULL )
+	{
+		fprintf( stderr, "error: sdf has no baked triangles (hash=0x%08x)\n", sdf->hash );
+		return InvalidMeshHandle();
+	}
+
+	return BuildMeshData( meshData );
+}
+
 MeshHandle FindOrAddHull( const b3HullData* hull )
 {
 	if ( !hull || hull->hash == 0u )
@@ -836,4 +848,27 @@ MeshHandle FindOrAddHeightField( const b3HeightFieldData* heightField )
 		return existing;
 	}
 	return BuildHeightField( heightField );
+}
+
+MeshHandle FindOrAddSDF( const b3SDFData* sdf )
+{
+	if ( !sdf || sdf->hash == 0u )
+	{
+		return InvalidMeshHandle();
+	}
+
+	const b3MeshData* meshData = b3GetSDFMesh( sdf );
+	if ( meshData == NULL )
+	{
+		return InvalidMeshHandle();
+	}
+
+	MeshHandle existing = FindMesh( meshData->hash );
+	if ( IsMeshHandleValid( existing ) )
+	{
+		AddMeshReference( existing );
+		return existing;
+	}
+
+	return BuildSDF( sdf );
 }

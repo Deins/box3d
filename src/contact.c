@@ -138,6 +138,9 @@ void b3InitializeContactRegisters( void )
 		b3AddType( b3_heightShape, b3_sphereShape );
 		b3AddType( b3_heightShape, b3_capsuleShape );
 		b3AddType( b3_heightShape, b3_hullShape );
+		b3AddType( b3_sdfShape, b3_sphereShape );
+		b3AddType( b3_sdfShape, b3_capsuleShape );
+		b3AddType( b3_sdfShape, b3_hullShape );
 		s_initialized = true;
 	}
 }
@@ -217,7 +220,7 @@ void b3CreateContact( b3World* world, b3Shape* shapeA, b3Shape* shapeB, int chil
 		contact->flags |= b3_contactRecycleFlag;
 	}
 
-	if ( shapeA->type == b3_meshShape || shapeA->type == b3_heightShape )
+	if ( shapeA->type == b3_meshShape || shapeA->type == b3_heightShape || shapeA->type == b3_sdfShape )
 	{
 		contact->flags |= b3_simMeshContact;
 	}
@@ -830,7 +833,7 @@ bool b3UpdateContact( b3World* world, int workerIndex, b3Contact* contact, b3Sha
 			}
 		}
 	}
-	else if ( shapeA->type == b3_meshShape || shapeA->type == b3_heightShape )
+	else if ( shapeA->type == b3_meshShape || shapeA->type == b3_heightShape || shapeA->type == b3_sdfShape )
 	{
 		// Does this contact touch a mesh or height-field?
 

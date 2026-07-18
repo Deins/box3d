@@ -50,7 +50,7 @@ typedef struct
 	float radius;
 } DebugCapsule;
 
-// Hull/mesh/heightfield. Scale only for mesh.
+// Hull/mesh/heightfield/SDF. Scale only for mesh.
 typedef struct
 {
 	MeshHandle handle;
@@ -632,6 +632,29 @@ static void* AdapterCreateDebugShape( const b3DebugShape* debugShape, void* cont
 		}
 		DebugShape* us = &s_adapter.pool[index];
 		us->kind = Box3DUS_HeightField;
+		PopulateCommonFields( us, debugShape );
+		us->geom.handle = handle;
+		us->geom.scale = b3Vec3_one;
+		return us;
+	}
+
+	if ( debugShape->type == b3_sdfShape )
+	{
+		const b3SDFData* sdf = debugShape->sdf;
+		const MeshHandle handle = FindOrAddSDF( sdf );
+		if ( !IsMeshHandleValid( handle ) )
+		{
+			return NULL;
+		}
+		const int index = AllocDebugShape();
+		if ( index < 0 )
+		{
+			ReleaseMeshReference( handle );
+			return NULL;
+		}
+		DebugShape* us = &s_adapter.pool[index];
+		// The renderer consumes the baked zero-isosurface as a regular mesh.
+		us->kind = Box3DUS_Mesh;
 		PopulateCommonFields( us, debugShape );
 		us->geom.handle = handle;
 		us->geom.scale = b3Vec3_one;

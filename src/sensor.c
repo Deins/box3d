@@ -58,6 +58,9 @@ static bool b3OverlapSensor( b3Shape* sensorShape, b3Transform sensorTransform, 
 		case b3_heightShape:
 			return b3OverlapHeightField( sensorShape->heightField, b3Transform_identity, &localProxy );
 
+		case b3_sdfShape:
+			return b3OverlapSDF( sensorShape->sdf, b3Transform_identity, &localProxy );
+
 		case b3_hullShape:
 			return b3OverlapHull( sensorShape->hull, b3Transform_identity, &localProxy );
 

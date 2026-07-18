@@ -1057,6 +1057,33 @@ static void b3RecDispatch_CreateHeightFieldShape( const b3RecArgs_CreateHeightFi
 	b3RecCheckShapeId( rdr, gotId, recId );
 }
 
+static void b3RecDispatch_CreateSDFShape( const b3RecArgs_CreateSDFShape* a, b3RecReader* rdr )
+{
+	b3ShapeId recId = b3RecR_SHAPEID( rdr );
+	if ( !rdr->ok )
+	{
+		return;
+	}
+	uint32_t id = a->geometryId;
+	if ( id >= (uint32_t)rdr->slotCount )
+	{
+		printf( "b3ReplayFile: SDF geometryId %u out of range\n", id );
+		rdr->ok = false;
+		return;
+	}
+	b3RegistrySlot* slot = rdr->slots + id;
+	const b3SDFData* sdf = (const b3SDFData*)slot->bytes;
+	if ( sdf == NULL || sdf->version != B3_SDF_VERSION )
+	{
+		printf( "b3ReplayFile: SDF geometry %u is corrupt\n", id );
+		rdr->ok = false;
+		return;
+	}
+	b3BodyId bodyId = b3RecMakeBodyId( rdr, a->body );
+	b3ShapeId gotId = b3CreateSDFShape( bodyId, &a->def, sdf );
+	b3RecCheckShapeId( rdr, gotId, recId );
+}
+
 static void b3RecDispatch_CreateCompoundShape( const b3RecArgs_CreateCompoundShape* a, b3RecReader* rdr )
 {
 	b3ShapeId recId = b3RecR_SHAPEID( rdr );

@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 // Ref-counted GPU buffer store for triangle geometries (convex hulls,
-// triangle meshes, heightfields). Owned by the renderer
+// triangle meshes, heightfields, and SDF surfaces). Owned by the renderer
 // Keyed by uint32_t content hash for Box3D shapes we
-// pass through b3HullData.hash / b3MeshData.hash / b3HeightFieldData.hash
+// pass through b3HullData.hash / b3MeshData.hash / b3HeightFieldData.hash /
+// b3GetSDFMesh(sdf)->hash
 //
 // Lifecycle:
 //

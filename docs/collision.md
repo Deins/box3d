@@ -216,6 +216,41 @@ Destroy the height field after the shape referencing it has been destroyed:
 b3DestroyHeightField(hf);
 ```
 
+### Signed-Distance Fields
+
+Signed-distance fields describe a regular 3D sample grid. Samples must be negative
+inside the solid and positive outside it. SDF shapes are static-only. Box3D bakes
+the zero isosurface into a welded, indexed mesh with a collision BVH when the field
+is created, while retaining the samples for volumetric point and proxy overlap tests.
+The baked mesh is available through `b3GetSDFMesh`:
+
+```c
+float distances[countX * countY * countZ];
+
+b3SDFDef def = {0};
+def.distances = distances;
+def.origin    = (b3Vec3){-10.0f, -4.0f, -10.0f};
+def.spacing   = (b3Vec3){0.25f, 0.25f, 0.25f};
+def.countX    = countX;
+def.countY    = countY;
+def.countZ    = countZ;
+
+b3SDFData* sdf = b3CreateSDF(&def);
+const b3MeshData* surface = b3GetSDFMesh(sdf);
+b3ShapeId id = b3CreateSDFShape(bodyId, &shapeDef, sdf);
+```
+
+The sampled field uses x-major indexing:
+`x + countX * (y + countY * z)`. The field bounds are the sample-grid bounds;
+make sure the grid includes a positive-distance margin around the solid. SDF
+ray casts and shape casts operate on the baked zero surface, while overlap tests
+also recognize queries fully inside the negative region. Destroy the SDF after
+destroying the shape that references it:
+
+```c
+b3DestroySDF(sdf);
+```
+
 ### Compound Shapes
 
 A compound shape aggregates spheres, capsules, hulls, and meshes into a single
@@ -243,7 +278,7 @@ bool hit = b3OverlapHull(&myHull, shapeTransform, &proxy);
 ```
 
 The same pattern works with `b3OverlapSphere`, `b3OverlapCapsule`,
-`b3OverlapMesh`, and `b3OverlapHeightField`.
+`b3OverlapMesh`, `b3OverlapHeightField`, and `b3OverlapSDF`.
 
 ### Ray Cast
 
@@ -268,7 +303,8 @@ if (output.hit)
 ```
 
 Per-shape ray cast functions: `b3RayCastSphere`, `b3RayCastCapsule`,
-`b3RayCastHull`, `b3RayCastMesh`, `b3RayCastHeightField`, `b3RayCastCompound`.
+`b3RayCastHull`, `b3RayCastMesh`, `b3RayCastHeightField`, `b3RayCastSDF`,
+`b3RayCastCompound`.
 All operate in the shape's local space. Use `b3IsValidRay` to validate input
 before calling.
 
@@ -300,7 +336,7 @@ if (output.hit)
 ```
 
 Per-shape cast functions: `b3ShapeCastSphere`, `b3ShapeCastCapsule`,
-`b3ShapeCastHull`, `b3ShapeCastMesh`, `b3ShapeCastHeightField`,
+`b3ShapeCastHull`, `b3ShapeCastMesh`, `b3ShapeCastHeightField`, `b3ShapeCastSDF`,
 `b3ShapeCastCompound`.
 
 For the most general form — sweeping one proxy against another — use

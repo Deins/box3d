@@ -1330,6 +1330,10 @@ static bool DrawQueryCallback( int proxyId, uint64_t userData, void* context )
 					debugShape.heightField = shape->heightField;
 					shape->userShape = world->createDebugShape( &debugShape, world->userDebugShapeContext );
 					break;
+				case b3_sdfShape:
+					debugShape.sdf = shape->sdf;
+					shape->userShape = world->createDebugShape( &debugShape, world->userDebugShapeContext );
+					break;
 				case b3_hullShape:
 					debugShape.hull = shape->hull;
 					shape->userShape = world->createDebugShape( &debugShape, world->userDebugShapeContext );
@@ -4059,6 +4063,15 @@ void b3ValidateContacts( b3World* world )
 				else if ( shapeA->type == b3_heightShape )
 				{
 					int triangleCount = b3GetHeightFieldTriangleCount( shapeA->heightField );
+					for ( int i = 0; i < cacheCount; ++i )
+					{
+						int triangleIndex = contact->meshContact.triangleCache.data[i].triangleIndex;
+						B3_ASSERT( 0 <= triangleIndex && triangleIndex < triangleCount );
+					}
+				}
+				else if ( shapeA->type == b3_sdfShape )
+				{
+					int triangleCount = shapeA->sdf->triangleCount;
 					for ( int i = 0; i < cacheCount; ++i )
 					{
 						int triangleIndex = contact->meshContact.triangleCache.data[i].triangleIndex;

@@ -18,7 +18,7 @@ buffer opens with a snapshot of the world as it stands when recording starts, so
 code path for both.
 
 A recording is self-contained. Shape geometry that cannot ride along as plain data, hulls,
-meshes, heightfields, and compounds, is interned once into a registry stored in the recording, so
+meshes, heightfields, SDFs, and compounds, is interned once into a registry stored in the recording, so
 the file carries everything needed to rebuild the world. No external mesh assets are required to
 replay.
 

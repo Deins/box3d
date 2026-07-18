@@ -482,7 +482,7 @@ static void b3DesWorldConfig( b3SnapReader* r, b3World* world )
 // Shapes carry pointer fields: materials, userData, userShape, and the geometry union.
 // Serialize the POD scalars with pointers nulled, then the owned materials array, then geometry.
 // A single material lives inline in the struct image.
-// Hull/mesh/heightField/compound are interned into the recording registry; sphere/capsule inline.
+// Hull/mesh/heightField/SDF/compound are interned into the recording registry; sphere/capsule inline.
 static void b3SerShapes( b3RecBuffer* buf, b3World* world, b3Recording* rec )
 {
 	int count = world->shapes.count;
@@ -555,6 +555,13 @@ static void b3SerShapes( b3RecBuffer* buf, b3World* world, b3Recording* rec )
 			{
 				b3SnapW_I32( buf, (int)b3_heightShape );
 				uint32_t gid = b3RecInternHeightField( rec, src->heightField );
+				b3SnapW_U32( buf, gid );
+				break;
+			}
+			case b3_sdfShape:
+			{
+				b3SnapW_I32( buf, (int)b3_sdfShape );
+				uint32_t gid = b3RecInternSDF( rec, src->sdf );
 				b3SnapW_U32( buf, gid );
 				break;
 			}
@@ -730,6 +737,22 @@ static void b3DesShapes( b3SnapReader* r, b3World* world, b3RecReader* rdr )
 				b3RegistrySlot* slot = rdr->slots + gid;
 				// Self-contained blob used by reference; point straight at the pristine bytes.
 				dst->heightField = (const b3HeightFieldData*)slot->bytes;
+				break;
+			}
+			case b3_sdfShape:
+			{
+				uint32_t gid = b3SnapR_U32( r );
+				if ( !r->ok )
+				{
+					break;
+				}
+				if ( rdr == NULL || gid >= (uint32_t)rdr->slotCount )
+				{
+					r->ok = false;
+					break;
+				}
+				b3RegistrySlot* slot = rdr->slots + gid;
+				dst->sdf = (const b3SDFData*)slot->bytes;
 				break;
 			}
 			case b3_compoundShape:

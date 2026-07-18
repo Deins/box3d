@@ -68,6 +68,7 @@ set(BOX3D_SOURCE_FILES
 	revolute_joint.c
 	scheduler.c
 	scheduler.h
+	sdf.c
 	sensor.c
 	sensor.h
 	shape.c

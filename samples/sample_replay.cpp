@@ -64,6 +64,8 @@ static const char* ReplayShapeTypeName( b3ShapeType type )
 			return "mesh";
 		case b3_heightShape:
 			return "height field";
+		case b3_sdfShape:
+			return "SDF";
 		case b3_compoundShape:
 			return "compound";
 		default:
