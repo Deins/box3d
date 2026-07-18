@@ -97,6 +97,7 @@ static int b3SDFCellTriangles( const b3Vec3* points, const float* values, b3SDFB
 		b3Vec3 tetraPoints[4];
 		float tetraValues[4];
 		b3Vec3 positiveCenter = b3Vec3_zero;
+		b3Vec3 negativeCenter = b3Vec3_zero;
 		int positiveCount = 0;
 		for ( int i = 0; i < 4; ++i )
 		{
@@ -107,6 +108,10 @@ static int b3SDFCellTriangles( const b3Vec3* points, const float* values, b3SDFB
 			{
 				positiveCenter = b3Add( positiveCenter, tetraPoints[i] );
 				positiveCount += 1;
+			}
+			else
+			{
+				negativeCenter = b3Add( negativeCenter, tetraPoints[i] );
 			}
 		}
 
@@ -146,7 +151,16 @@ static int b3SDFCellTriangles( const b3Vec3* points, const float* values, b3SDFB
 		center = b3MulSV( 1.0f / (float)intersectionCount, center );
 		positiveCenter = b3MulSV( 1.0f / (float)positiveCount, positiveCenter );
 
-		b3Vec3 normalDirection = b3Normalize( b3Sub( positiveCenter, center ) );
+	b3Vec3 normalDirection = b3Sub( positiveCenter, center );
+	if ( b3LengthSquared( normalDirection ) == 0.0f )
+	{
+		// All non-negative vertices may lie exactly on the isosurface. In that
+		// case, orient away from the negative vertices instead.
+		int negativeCount = 4 - positiveCount;
+			negativeCenter = b3MulSV( 1.0f / (float)negativeCount, negativeCenter );
+			normalDirection = b3Sub( center, negativeCenter );
+		}
+		normalDirection = b3Normalize( normalDirection );
 		if ( b3LengthSquared( normalDirection ) == 0.0f )
 		{
 			normalDirection = b3Vec3_axisY;
@@ -529,37 +543,14 @@ b3CastOutput b3RayCastSDF( const b3SDFData* shape, const b3RayCastInput* input )
 	return context.output;
 }
 
-static int b3BuildSDFCellUnique( const b3SDFData* sdf, int x, int y, int z, b3SDFBuildTriangle* triangles )
+static int b3BuildSDFCellUniqueLocal( const b3SDFDef* source, int x, int y, int z, b3SDFBuildTriangle* triangles )
 {
-	b3SDFDef source = {
-		.distances = (float*)b3GetSDFDistances( sdf ),
-		.origin = sdf->origin,
-		.spacing = sdf->spacing,
-		.countX = sdf->countX,
-		.countY = sdf->countY,
-		.countZ = sdf->countZ,
-	};
 	b3SDFBuildTriangle candidates[12];
-	int candidateCount = b3SDFBuildCell( &source, x, y, z, candidates );
+	int candidateCount = b3SDFBuildCell( source, x, y, z, candidates );
 	int count = 0;
 	for ( int i = 0; i < candidateCount; ++i )
 	{
 		b3SDFBuildTriangle candidate = candidates[i];
-
-		// A surface exactly on a cell boundary belongs to the adjacent cell with
-		// the lower index. This avoids duplicate triangles without a global sort.
-		b3Vec3 lower = b3SDFGridPoint( &source, x, y, z );
-		bool onLowerX = x > 0 && candidate.vertices[0].x == lower.x && candidate.vertices[1].x == lower.x &&
-						candidate.vertices[2].x == lower.x;
-		bool onLowerY = y > 0 && candidate.vertices[0].y == lower.y && candidate.vertices[1].y == lower.y &&
-						candidate.vertices[2].y == lower.y;
-		bool onLowerZ = z > 0 && candidate.vertices[0].z == lower.z && candidate.vertices[1].z == lower.z &&
-						candidate.vertices[2].z == lower.z;
-		if ( onLowerX || onLowerY || onLowerZ )
-		{
-			continue;
-		}
-
 		bool duplicate = false;
 		for ( int j = 0; j < count; ++j )
 		{
@@ -573,6 +564,59 @@ static int b3BuildSDFCellUnique( const b3SDFData* sdf, int x, int y, int z, b3SD
 		{
 			triangles[count++] = candidate;
 		}
+	}
+	return count;
+}
+
+static bool b3SDFCellHasTriangle( const b3SDFDef* source, int x, int y, int z, const b3SDFBuildTriangle* triangle )
+{
+	b3SDFBuildTriangle triangles[12];
+	int count = b3BuildSDFCellUniqueLocal( source, x, y, z, triangles );
+	for ( int i = 0; i < count; ++i )
+	{
+		if ( b3SameSDFTriangleGeometry( triangles + i, triangle ) )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+static int b3BuildSDFCellUnique( const b3SDFData* sdf, int x, int y, int z, b3SDFBuildTriangle* triangles )
+{
+	b3SDFDef source = {
+		.distances = (float*)b3GetSDFDistances( sdf ),
+		.origin = sdf->origin,
+		.spacing = sdf->spacing,
+		.countX = sdf->countX,
+		.countY = sdf->countY,
+		.countZ = sdf->countZ,
+	};
+	b3SDFBuildTriangle candidates[12];
+	int candidateCount = b3BuildSDFCellUniqueLocal( &source, x, y, z, candidates );
+	int count = 0;
+	for ( int i = 0; i < candidateCount; ++i )
+	{
+		b3SDFBuildTriangle candidate = candidates[i];
+
+		// Prefer the adjacent lower-index cell for a surface exactly on a cell
+		// boundary, but only if that cell generates the same triangle. Exact-zero
+		// samples can make only one of the two cells generate the surface.
+		b3Vec3 lower = b3SDFGridPoint( &source, x, y, z );
+		bool onLowerX = x > 0 && candidate.vertices[0].x == lower.x && candidate.vertices[1].x == lower.x &&
+						candidate.vertices[2].x == lower.x;
+		bool onLowerY = y > 0 && candidate.vertices[0].y == lower.y && candidate.vertices[1].y == lower.y &&
+						candidate.vertices[2].y == lower.y;
+		bool onLowerZ = z > 0 && candidate.vertices[0].z == lower.z && candidate.vertices[1].z == lower.z &&
+						candidate.vertices[2].z == lower.z;
+		if ( ( onLowerX && b3SDFCellHasTriangle( &source, x - 1, y, z, &candidate ) ) ||
+			 ( onLowerY && b3SDFCellHasTriangle( &source, x, y - 1, z, &candidate ) ) ||
+			 ( onLowerZ && b3SDFCellHasTriangle( &source, x, y, z - 1, &candidate ) ) )
+		{
+			continue;
+		}
+
+		triangles[count++] = candidate;
 	}
 	return count;
 }
