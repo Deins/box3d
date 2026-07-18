@@ -15,6 +15,7 @@ typedef struct SDFQueryContext
 {
 	int count;
 	bool nonDegenerate;
+	b3Vec3 normalSum;
 } SDFQueryContext;
 
 static bool CountSDFTriangle( b3Vec3 a, b3Vec3 b, b3Vec3 c, int triangleIndex, void* rawContext )
@@ -23,6 +24,7 @@ static bool CountSDFTriangle( b3Vec3 a, b3Vec3 b, b3Vec3 c, int triangleIndex, v
 	SDFQueryContext* context = rawContext;
 	b3Vec3 normal = b3Cross( b3Sub( b, a ), b3Sub( c, a ) );
 	context->nonDegenerate = context->nonDegenerate && b3LengthSquared( normal ) > FLT_EPSILON * FLT_EPSILON;
+	context->normalSum = b3Add( context->normalSum, normal );
 	context->count += 1;
 	return true;
 }
@@ -137,6 +139,27 @@ static int SDFExactZeroSamples( void )
 	b3AABB faceBounds = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 0.0f } };
 	b3QuerySDF( sdf, faceBounds, CountSDFTriangle, &query );
 	ENSURE( query.count == 1 );
+	b3DestroySDF( sdf );
+
+	// A complete zero-valued face between positive and negative sample planes
+	// must not be discarded in favor of the adjacent cell that has no crossing.
+	float planeDistances[12];
+	for ( int i = 0; i < 4; ++i )
+	{
+		planeDistances[i] = 1.0f;
+		planeDistances[4 + i] = 0.0f;
+		planeDistances[8 + i] = -1.0f;
+	}
+	def.distances = planeDistances;
+	def.origin = (b3Vec3){ -1.0f, -1.0f, -1.0f };
+	def.countZ = 3;
+	sdf = b3CreateSDF( &def );
+	ENSURE( sdf != NULL );
+	query = (SDFQueryContext){ .nonDegenerate = true };
+	b3QuerySDF( sdf, sdf->aabb, CountSDFTriangle, &query );
+	ENSURE( query.count == 2 );
+	ENSURE( query.nonDegenerate );
+	ENSURE( query.normalSum.z < 0.0f );
 	b3DestroySDF( sdf );
 	return 0;
 }
