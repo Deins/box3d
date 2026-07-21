@@ -79,16 +79,53 @@ static b3Vec3 b3SDFGridPoint( const b3SDFDef* data, int x, int y, int z )
 	return b3Add( data->origin, b3Mul( data->spacing, (b3Vec3){ (float)x, (float)y, (float)z } ) );
 }
 
+static uint32_t b3LoadSDFCellValues( float values[8], const float* distances, int countX, int countY, int x, int y, int z,
+									 bool* hasExactZero )
+{
+	int strideY = countX;
+	int strideZ = countX * countY;
+	int index = x + strideY * y + strideZ * z;
+	const float* cellDistances = distances + index;
+	values[0] = cellDistances[0];
+	values[1] = cellDistances[1];
+	values[2] = cellDistances[strideY + 1];
+	values[3] = cellDistances[strideY];
+	values[4] = cellDistances[strideZ];
+	values[5] = cellDistances[strideZ + 1];
+	values[6] = cellDistances[strideZ + strideY + 1];
+	values[7] = cellDistances[strideZ + strideY];
+
+	uint32_t insideMask = 0;
+	bool exactZero = false;
+	for ( int i = 0; i < 8; ++i )
+	{
+		insideMask |= (uint32_t)( values[i] < 0.0f ) << i;
+		exactZero = exactZero || values[i] == 0.0f;
+	}
+
+	if ( hasExactZero != NULL )
+	{
+		*hasExactZero = exactZero;
+	}
+	return insideMask;
+}
+
 static int b3SDFCellTriangles( const b3Vec3* points, const float* values, b3SDFBuildTriangle* output )
 {
-	// A six-tetrahedral decomposition avoids the lookup table and ambiguous cases of
-	// marching cubes. The diagonal is shared by all six tetrahedra.
+	// A six-tetrahedral decomposition avoids the ambiguous cases of marching cubes.
+	// The diagonal is shared by all six tetrahedra.
 	static const int tetrahedra[6][4] = {
 		{ 0, 5, 1, 6 }, { 0, 1, 2, 6 }, { 0, 2, 3, 6 }, { 0, 3, 7, 6 }, { 0, 7, 4, 6 }, { 0, 4, 5, 6 },
 	};
 
 	static const int edges[6][2] = {
 		{ 0, 1 }, { 0, 2 }, { 0, 3 }, { 1, 2 }, { 1, 3 }, { 2, 3 },
+	};
+	static const int8_t triangleEdges[16][6] = {
+		{ -1, -1, -1, -1, -1, -1 }, { 0, 2, 1, -1, -1, -1 }, { 0, 3, 4, -1, -1, -1 }, { 3, 4, 1, 1, 4, 2 },
+		{ 3, 1, 5, -1, -1, -1 },	{ 0, 2, 5, 0, 5, 3 },	 { 0, 1, 5, 0, 5, 4 },	  { 5, 4, 2, -1, -1, -1 },
+		{ 2, 4, 5, -1, -1, -1 },	{ 4, 5, 0, 5, 1, 0 },	 { 3, 5, 0, 5, 2, 0 },	  { 5, 1, 3, -1, -1, -1 },
+		{ 2, 4, 1, 1, 4, 3 },		{ 4, 3, 0, -1, -1, -1 }, { 1, 2, 0, -1, -1, -1 }, { -1, -1, -1, -1, -1, -1 },
 	};
 
 	int triangleCount = 0;
@@ -99,6 +136,7 @@ static int b3SDFCellTriangles( const b3Vec3* points, const float* values, b3SDFB
 		b3Vec3 positiveCenter = b3Vec3_zero;
 		b3Vec3 negativeCenter = b3Vec3_zero;
 		int positiveCount = 0;
+		int caseIndex = 0;
 		for ( int i = 0; i < 4; ++i )
 		{
 			int index = tetrahedra[t][i];
@@ -112,15 +150,18 @@ static int b3SDFCellTriangles( const b3Vec3* points, const float* values, b3SDFB
 			else
 			{
 				negativeCenter = b3Add( negativeCenter, tetraPoints[i] );
+				caseIndex |= 1 << i;
 			}
 		}
 
-		if ( positiveCount == 0 || positiveCount == 4 )
+		const int8_t* edgeList = triangleEdges[caseIndex];
+		if ( edgeList[0] < 0 )
 		{
 			continue;
 		}
 
 		b3Vec3 intersections[6];
+		b3Vec3 center = b3Vec3_zero;
 		int intersectionCount = 0;
 		for ( int e = 0; e < 6; ++e )
 		{
@@ -130,73 +171,38 @@ static int b3SDFCellTriangles( const b3Vec3* points, const float* values, b3SDFB
 			bool inside2 = tetraValues[i2] < 0.0f;
 			if ( inside1 == inside2 )
 			{
+				intersections[e] = b3Vec3_zero;
 				continue;
 			}
 
 			float denominator = tetraValues[i1] - tetraValues[i2];
 			float alpha = denominator != 0.0f ? tetraValues[i1] / denominator : 0.5f;
-			intersections[intersectionCount++] = b3Lerp( tetraPoints[i1], tetraPoints[i2], alpha );
-		}
-
-		if ( intersectionCount < 3 )
-		{
-			continue;
-		}
-
-		b3Vec3 center = b3Vec3_zero;
-		for ( int i = 0; i < intersectionCount; ++i )
-		{
-			center = b3Add( center, intersections[i] );
+			intersections[e] = b3Lerp( tetraPoints[i1], tetraPoints[i2], alpha );
+			center = b3Add( center, intersections[e] );
+			intersectionCount += 1;
 		}
 		center = b3MulSV( 1.0f / (float)intersectionCount, center );
 		positiveCenter = b3MulSV( 1.0f / (float)positiveCount, positiveCenter );
 
-	b3Vec3 normalDirection = b3Sub( positiveCenter, center );
-	if ( b3LengthSquared( normalDirection ) == 0.0f )
-	{
-		// All non-negative vertices may lie exactly on the isosurface. In that
-		// case, orient away from the negative vertices instead.
-		int negativeCount = 4 - positiveCount;
+		b3Vec3 normalDirection = b3Sub( positiveCenter, center );
+		if ( b3LengthSquared( normalDirection ) == 0.0f )
+		{
+			// All non-negative vertices may lie exactly on the isosurface. In that
+			// case, orient away from the negative vertices instead.
+			int negativeCount = 4 - positiveCount;
 			negativeCenter = b3MulSV( 1.0f / (float)negativeCount, negativeCenter );
 			normalDirection = b3Sub( center, negativeCenter );
 		}
-		normalDirection = b3Normalize( normalDirection );
 		if ( b3LengthSquared( normalDirection ) == 0.0f )
 		{
 			normalDirection = b3Vec3_axisY;
 		}
 
-		// Sort the intersection polygon around the positive-side direction.
-		b3Vec3 u = b3Perp( normalDirection );
-		b3Vec3 v = b3Cross( normalDirection, u );
-		float angles[6];
-		for ( int i = 0; i < intersectionCount; ++i )
+		for ( int i = 0; i < 6 && edgeList[i] >= 0; i += 3 )
 		{
-			b3Vec3 d = b3Sub( intersections[i], center );
-			angles[i] = atan2f( b3Dot( d, v ), b3Dot( d, u ) );
-		}
-
-		for ( int i = 1; i < intersectionCount; ++i )
-		{
-			b3Vec3 point = intersections[i];
-			float angle = angles[i];
-			int j = i;
-			while ( j > 0 && angles[j - 1] > angle )
-			{
-				intersections[j] = intersections[j - 1];
-				angles[j] = angles[j - 1];
-				--j;
-			}
-			intersections[j] = point;
-			angles[j] = angle;
-		}
-
-		int fanCount = intersectionCount - 2;
-		for ( int i = 0; i < fanCount; ++i )
-		{
-			b3Vec3 p1 = intersections[0];
-			b3Vec3 p2 = intersections[i + 1];
-			b3Vec3 p3 = intersections[i + 2];
+			b3Vec3 p1 = intersections[edgeList[i]];
+			b3Vec3 p2 = intersections[edgeList[i + 1]];
+			b3Vec3 p3 = intersections[edgeList[i + 2]];
 			b3Vec3 triangleNormal = b3Cross( b3Sub( p2, p1 ), b3Sub( p3, p1 ) );
 			float minDoubleArea = 0.02f * B3_LINEAR_SLOP * B3_LINEAR_SLOP;
 			if ( b3LengthSquared( triangleNormal ) <= minDoubleArea * minDoubleArea )
@@ -224,22 +230,29 @@ static int b3SDFCellTriangles( const b3Vec3* points, const float* values, b3SDFB
 	return triangleCount;
 }
 
-static int b3SDFBuildCell( const b3SDFDef* data, int x, int y, int z, b3SDFBuildTriangle* output )
+static int b3SDFBuildCell( const b3SDFDef* data, int x, int y, int z, b3SDFBuildTriangle* output, bool* hasExactZero )
 {
-	b3Vec3 points[8];
 	float values[8];
-	static const int offsets[8][3] = {
-		{ 0, 0, 0 }, { 1, 0, 0 }, { 1, 1, 0 }, { 0, 1, 0 }, { 0, 0, 1 }, { 1, 0, 1 }, { 1, 1, 1 }, { 0, 1, 1 },
-	};
-
-	for ( int i = 0; i < 8; ++i )
+	uint32_t insideMask = b3LoadSDFCellValues( values, data->distances, data->countX, data->countY, x, y, z, hasExactZero );
+	if ( insideMask == 0 || insideMask == 0xFFu )
 	{
-		int px = x + offsets[i][0];
-		int py = y + offsets[i][1];
-		int pz = z + offsets[i][2];
-		points[i] = b3SDFGridPoint( data, px, py, pz );
-		values[i] = data->distances[b3SDFIndex( data->countX, data->countY, px, py, pz )];
+		return 0;
 	}
+
+	b3Vec3 p = b3SDFGridPoint( data, x, y, z );
+	b3Vec3 dx = { data->spacing.x, 0.0f, 0.0f };
+	b3Vec3 dy = { 0.0f, data->spacing.y, 0.0f };
+	b3Vec3 dz = { 0.0f, 0.0f, data->spacing.z };
+	b3Vec3 points[8] = {
+		p,
+		b3Add( p, dx ),
+		b3Add( b3Add( p, dx ), dy ),
+		b3Add( p, dy ),
+		b3Add( p, dz ),
+		b3Add( b3Add( p, dx ), dz ),
+		b3Add( b3Add( b3Add( p, dx ), dy ), dz ),
+		b3Add( b3Add( p, dy ), dz ),
+	};
 
 	return b3SDFCellTriangles( points, values, output );
 }
@@ -343,7 +356,6 @@ b3SDFData* b3CreateSDF( const b3SDFDef* data )
 	size_t byteCount = b3AlignUp8( sizeof( b3SDFData ) );
 	int distancesOffset = (int)byteCount;
 	byteCount += b3AlignUp8( sampleCount * sizeof( float ) );
-
 	if ( byteCount > (size_t)INT_MAX )
 	{
 		return NULL;
@@ -543,14 +555,19 @@ b3CastOutput b3RayCastSDF( const b3SDFData* shape, const b3RayCastInput* input )
 	return context.output;
 }
 
-static int b3BuildSDFCellUniqueLocal( const b3SDFDef* source, int x, int y, int z, b3SDFBuildTriangle* triangles )
+static int b3BuildSDFCellUniqueLocal( const b3SDFDef* source, int x, int y, int z, b3SDFBuildTriangle* triangles,
+									  bool* hasExactZero )
 {
-	b3SDFBuildTriangle candidates[12];
-	int candidateCount = b3SDFBuildCell( source, x, y, z, candidates );
+	int candidateCount = b3SDFBuildCell( source, x, y, z, triangles, hasExactZero );
+	if ( *hasExactZero == false )
+	{
+		return candidateCount;
+	}
+
 	int count = 0;
 	for ( int i = 0; i < candidateCount; ++i )
 	{
-		b3SDFBuildTriangle candidate = candidates[i];
+		b3SDFBuildTriangle candidate = triangles[i];
 		bool duplicate = false;
 		for ( int j = 0; j < count; ++j )
 		{
@@ -571,7 +588,8 @@ static int b3BuildSDFCellUniqueLocal( const b3SDFDef* source, int x, int y, int 
 static bool b3SDFCellHasTriangle( const b3SDFDef* source, int x, int y, int z, const b3SDFBuildTriangle* triangle )
 {
 	b3SDFBuildTriangle triangles[12];
-	int count = b3BuildSDFCellUniqueLocal( source, x, y, z, triangles );
+	bool hasExactZero;
+	int count = b3BuildSDFCellUniqueLocal( source, x, y, z, triangles, &hasExactZero );
 	for ( int i = 0; i < count; ++i )
 	{
 		if ( b3SameSDFTriangleGeometry( triangles + i, triangle ) )
@@ -592,12 +610,17 @@ static int b3BuildSDFCellUnique( const b3SDFData* sdf, int x, int y, int z, b3SD
 		.countY = sdf->countY,
 		.countZ = sdf->countZ,
 	};
-	b3SDFBuildTriangle candidates[12];
-	int candidateCount = b3BuildSDFCellUniqueLocal( &source, x, y, z, candidates );
+	bool hasExactZero;
+	int candidateCount = b3BuildSDFCellUniqueLocal( &source, x, y, z, triangles, &hasExactZero );
+	if ( hasExactZero == false )
+	{
+		return candidateCount;
+	}
+
 	int count = 0;
 	for ( int i = 0; i < candidateCount; ++i )
 	{
-		b3SDFBuildTriangle candidate = candidates[i];
+		b3SDFBuildTriangle candidate = triangles[i];
 
 		// Prefer the adjacent lower-index cell for a surface exactly on a cell
 		// boundary, but only if that cell generates the same triangle. Exact-zero
@@ -667,16 +690,19 @@ void b3QuerySDF( const b3SDFData* sdf, b3AABB bounds, b3MeshQueryFcn* fcn, void*
 	{
 		return;
 	}
+	bounds.lowerBound = b3Max( bounds.lowerBound, sdf->aabb.lowerBound );
+	bounds.upperBound = b3Min( bounds.upperBound, sdf->aabb.upperBound );
 
 	b3Vec3 d1 = b3Sub( bounds.lowerBound, sdf->origin );
 	b3Vec3 d2 = b3Sub( bounds.upperBound, sdf->origin );
 	b3Vec3 q1 = { d1.x / sdf->spacing.x, d1.y / sdf->spacing.y, d1.z / sdf->spacing.z };
 	b3Vec3 q2 = { d2.x / sdf->spacing.x, d2.y / sdf->spacing.y, d2.z / sdf->spacing.z };
 	// Include the cell immediately below the lower bound. A zero surface that
-	// lies exactly on a cell boundary is owned by that lower cell.
-	int minX = b3ClampInt( (int)floorf( q1.x ) - 1, 0, sdf->countX - 2 );
-	int minY = b3ClampInt( (int)floorf( q1.y ) - 1, 0, sdf->countY - 2 );
-	int minZ = b3ClampInt( (int)floorf( q1.z ) - 1, 0, sdf->countZ - 2 );
+	// lies exactly on a cell boundary may be owned by that lower cell. For a
+	// fractional coordinate, ceil(q) - 1 is just the containing cell.
+	int minX = b3ClampInt( (int)ceilf( q1.x ) - 1, 0, sdf->countX - 2 );
+	int minY = b3ClampInt( (int)ceilf( q1.y ) - 1, 0, sdf->countY - 2 );
+	int minZ = b3ClampInt( (int)ceilf( q1.z ) - 1, 0, sdf->countZ - 2 );
 	int maxX = b3ClampInt( (int)floorf( q2.x ), 0, sdf->countX - 2 );
 	int maxY = b3ClampInt( (int)floorf( q2.y ), 0, sdf->countY - 2 );
 	int maxZ = b3ClampInt( (int)floorf( q2.z ), 0, sdf->countZ - 2 );
@@ -689,9 +715,10 @@ void b3QuerySDF( const b3SDFData* sdf, b3AABB bounds, b3MeshQueryFcn* fcn, void*
 		{
 			for ( int x = minX; x <= maxX; ++x )
 			{
+				int cellIndex = x + cellsX * ( y + cellsY * z );
+
 				b3SDFBuildTriangle triangles[12];
 				int count = b3BuildSDFCellUnique( sdf, x, y, z, triangles );
-				int cellIndex = x + cellsX * ( y + cellsY * z );
 				for ( int i = 0; i < count; ++i )
 				{
 					b3Vec3 a = triangles[i].vertices[0];
