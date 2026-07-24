@@ -440,6 +440,11 @@ B3_INLINE const float* b3GetSDFDistances( const b3SDFData* sdf )
 /// Create a generic sampled signed-distance field.
 B3_API b3SDFData* b3CreateSDF( const b3SDFDef* data );
 
+/// Update an SDF in place without changing its allocation. The new definition must contain the same number of samples as
+/// the original definition. Call b3Shape_SetSDF for every shape that references this SDF after a successful update.
+/// @return false if the definition is invalid or its sample count differs from the original SDF.
+B3_API bool b3UpdateSDF( b3SDFData* sdf, const b3SDFDef* data );
+
 /// Destroy an SDF.
 B3_API void b3DestroySDF( b3SDFData* sdf );
 
