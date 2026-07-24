@@ -1739,6 +1739,35 @@ void b3Shape_SetMesh( b3ShapeId shapeId, const b3MeshData* meshData, b3Vec3 scal
 	world->locked = false;
 }
 
+void b3Shape_SetSDF( b3ShapeId shapeId, const b3SDFData* sdf )
+{
+	B3_VALIDATE( sdf != NULL && sdf->version == B3_SDF_VERSION );
+	B3_VALIDATE( sdf->hash != 0 );
+
+	b3World* world = b3GetUnlockedWorld( shapeId.world0 );
+	if ( world == NULL )
+	{
+		return;
+	}
+
+	world->locked = true;
+
+	b3Shape* shape = b3GetShape( world, shapeId );
+	b3DestroyShapeAllocationForShapeChange( world, shape );
+
+	shape->sdf = sdf;
+	shape->type = b3_sdfShape;
+	shape->aabbMargin = b3ComputeShapeMargin( shape );
+
+	// The SDF may have changed in place, so contacts and the broad-phase proxy must be refreshed even when the pointer is
+	// unchanged.
+	bool wakeBodies = true;
+	bool destroyProxy = true;
+	b3ResetProxy( world, shape, wakeBodies, destroyProxy );
+
+	world->locked = false;
+}
+
 int b3Shape_GetContactCapacity( b3ShapeId shapeId )
 {
 	b3World* world = b3GetUnlockedWorld( shapeId.world0 );

@@ -988,6 +988,11 @@ B3_API void b3Shape_SetHull( b3ShapeId shapeId, const b3HullData* hull );
 /// @see b3Body_ApplyMassFromShapes
 B3_API void b3Shape_SetMesh( b3ShapeId shapeId, const b3MeshData* meshData, b3Vec3 scale );
 
+/// Allows you to change a shape to be an SDF or notify Box3D that its current SDF was updated.
+/// This refreshes contacts and the broad-phase proxy. This does not modify the mass properties.
+/// @see b3UpdateSDF
+B3_API void b3Shape_SetSDF( b3ShapeId shapeId, const b3SDFData* sdf );
+
 /// Get the maximum capacity required for retrieving all the touching contacts on a shape
 B3_API int b3Shape_GetContactCapacity( b3ShapeId shapeId );
 

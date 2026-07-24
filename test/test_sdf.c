@@ -164,6 +164,43 @@ static int SDFExactZeroSamples( void )
 	return 0;
 }
 
+static int SDFUpdate( void )
+{
+	b3SDFData* sdf = MakeBoxSDF();
+	ENSURE( sdf != NULL );
+	uint32_t oldHash = sdf->hash;
+
+	float distances[9 * 9 * 9];
+	for ( int i = 0; i < ARRAY_COUNT( distances ); ++i )
+	{
+		distances[i] = 1.0f;
+	}
+
+	b3SDFDef def = {
+		.distances = distances,
+		.origin = { 3.0f, 4.0f, 5.0f },
+		.spacing = { 0.5f, 0.5f, 0.5f },
+		.countX = 9,
+		.countY = 9,
+		.countZ = 9,
+	};
+	ENSURE( b3UpdateSDF( sdf, &def ) );
+	ENSURE( sdf->hash != oldHash );
+	ENSURE_SMALL( sdf->aabb.lowerBound.x - def.origin.x, FLT_EPSILON );
+	ENSURE_SMALL( sdf->aabb.upperBound.z - def.origin.z, FLT_EPSILON );
+
+	SDFQueryContext query = { .nonDegenerate = true };
+	b3QuerySDF( sdf, sdf->aabb, CountSDFTriangle, &query );
+	ENSURE( query.count == 0 );
+
+	def.countZ = 8;
+	ENSURE( b3UpdateSDF( sdf, &def ) == false );
+	ENSURE( sdf->countZ == 9 );
+
+	b3DestroySDF( sdf );
+	return 0;
+}
+
 static int SDFStaticOnly( void )
 {
 	b3SDFData* sdf = MakeBoxSDF();
@@ -199,6 +236,27 @@ static int SDFStaticOnly( void )
 	}
 	ENSURE( b3Body_GetPosition( fallingBody ).y > 0.8f );
 
+	float emptyDistances[9 * 9 * 9];
+	for ( int i = 0; i < ARRAY_COUNT( emptyDistances ); ++i )
+	{
+		emptyDistances[i] = 1.0f;
+	}
+	b3SDFDef emptyDef = {
+		.distances = emptyDistances,
+		.origin = { -2.0f, -2.0f, -2.0f },
+		.spacing = { 0.5f, 0.5f, 0.5f },
+		.countX = 9,
+		.countY = 9,
+		.countZ = 9,
+	};
+	ENSURE( b3UpdateSDF( sdf, &emptyDef ) );
+	b3Shape_SetSDF( shape, sdf );
+	for ( int i = 0; i < 120; ++i )
+	{
+		b3World_Step( world, 1.0f / 60.0f, 4 );
+	}
+	ENSURE( b3Body_GetPosition( fallingBody ).y < -1.0f );
+
 	b3DestroyWorld( world );
 	b3DestroySDF( sdf );
 	return 0;
@@ -208,6 +266,7 @@ int SDFTest( void )
 {
 	RUN_SUBTEST( SDFCreateAndQuery );
 	RUN_SUBTEST( SDFExactZeroSamples );
+	RUN_SUBTEST( SDFUpdate );
 	RUN_SUBTEST( SDFStaticOnly );
 	return 0;
 }

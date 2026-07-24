@@ -79,6 +79,87 @@ static b3Vec3 b3SDFGridPoint( const b3SDFDef* data, int x, int y, int z )
 	return b3Add( data->origin, b3Mul( data->spacing, (b3Vec3){ (float)x, (float)y, (float)z } ) );
 }
 
+static bool b3ValidateSDFDef( const b3SDFDef* data, size_t* sampleCount, b3AABB* aabb )
+{
+	if ( data == NULL || data->distances == NULL || data->countX < 2 || data->countY < 2 || data->countZ < 2 )
+	{
+		return false;
+	}
+
+	if ( b3IsValidVec3( data->origin ) == false || b3IsValidVec3( data->spacing ) == false || data->spacing.x <= 0.0f ||
+		 data->spacing.y <= 0.0f || data->spacing.z <= 0.0f )
+	{
+		return false;
+	}
+
+	size_t samplesXY = (size_t)data->countX * (size_t)data->countY;
+	if ( samplesXY > (size_t)INT_MAX / (size_t)data->countZ )
+	{
+		return false;
+	}
+
+	size_t count = samplesXY * (size_t)data->countZ;
+	size_t cellsXY = (size_t)( data->countX - 1 ) * (size_t)( data->countY - 1 );
+	if ( cellsXY > (size_t)INT_MAX / 12u / (size_t)( data->countZ - 1 ) )
+	{
+		return false;
+	}
+
+	int minX = data->countX;
+	int minY = data->countY;
+	int minZ = data->countZ;
+	int maxX = -1;
+	int maxY = -1;
+	int maxZ = -1;
+	for ( int z = 0; z < data->countZ; ++z )
+	{
+		for ( int y = 0; y < data->countY; ++y )
+		{
+			for ( int x = 0; x < data->countX; ++x )
+			{
+				float distance = data->distances[b3SDFIndex( data->countX, data->countY, x, y, z )];
+				if ( b3IsValidFloat( distance ) == false )
+				{
+					return false;
+				}
+				if ( distance <= 0.0f )
+				{
+					minX = b3MinInt( minX, x );
+					minY = b3MinInt( minY, y );
+					minZ = b3MinInt( minZ, z );
+					maxX = b3MaxInt( maxX, x );
+					maxY = b3MaxInt( maxY, y );
+					maxZ = b3MaxInt( maxZ, z );
+				}
+			}
+		}
+	}
+
+	b3Vec3 gridExtent =
+		b3Mul( data->spacing, (b3Vec3){ (float)( data->countX - 1 ), (float)( data->countY - 1 ), (float)( data->countZ - 1 ) } );
+	b3Vec3 gridUpper = b3Add( data->origin, gridExtent );
+	if ( b3IsValidVec3( gridExtent ) == false || b3IsValidVec3( gridUpper ) == false )
+	{
+		return false;
+	}
+
+	if ( maxX >= 0 )
+	{
+		b3Vec3 lowerIndex = { (float)b3MaxInt( minX - 1, 0 ), (float)b3MaxInt( minY - 1, 0 ), (float)b3MaxInt( minZ - 1, 0 ) };
+		b3Vec3 upperIndex = { (float)b3MinInt( maxX + 1, data->countX - 1 ), (float)b3MinInt( maxY + 1, data->countY - 1 ),
+							  (float)b3MinInt( maxZ + 1, data->countZ - 1 ) };
+		*aabb = (b3AABB){ b3Add( data->origin, b3Mul( data->spacing, lowerIndex ) ),
+						  b3Add( data->origin, b3Mul( data->spacing, upperIndex ) ) };
+	}
+	else
+	{
+		*aabb = (b3AABB){ data->origin, data->origin };
+	}
+
+	*sampleCount = count;
+	return true;
+}
+
 static uint32_t b3LoadSDFCellValues( float values[8], const float* distances, int countX, int countY, int x, int y, int z,
 									 bool* hasExactZero )
 {
@@ -297,58 +378,9 @@ static float b3SDFSample( const b3SDFData* sdf, b3Vec3 point )
 
 b3SDFData* b3CreateSDF( const b3SDFDef* data )
 {
-	if ( data == NULL || data->distances == NULL || data->countX < 2 || data->countY < 2 || data->countZ < 2 )
-	{
-		return NULL;
-	}
-
-	if ( b3IsValidVec3( data->origin ) == false || b3IsValidVec3( data->spacing ) == false || data->spacing.x <= 0.0f ||
-		 data->spacing.y <= 0.0f || data->spacing.z <= 0.0f )
-	{
-		return NULL;
-	}
-
-	size_t sampleCount = (size_t)data->countX * (size_t)data->countY * (size_t)data->countZ;
-	size_t cellCount = (size_t)( data->countX - 1 ) * (size_t)( data->countY - 1 ) * (size_t)( data->countZ - 1 );
-	if ( sampleCount > (size_t)INT_MAX || cellCount > (size_t)INT_MAX / 12u )
-	{
-		return NULL;
-	}
-
-	int minX = data->countX;
-	int minY = data->countY;
-	int minZ = data->countZ;
-	int maxX = -1;
-	int maxY = -1;
-	int maxZ = -1;
-	for ( int z = 0; z < data->countZ; ++z )
-	{
-		for ( int y = 0; y < data->countY; ++y )
-		{
-			for ( int x = 0; x < data->countX; ++x )
-			{
-				float distance = data->distances[b3SDFIndex( data->countX, data->countY, x, y, z )];
-				if ( b3IsValidFloat( distance ) == false )
-				{
-					return NULL;
-				}
-				if ( distance <= 0.0f )
-				{
-					minX = b3MinInt( minX, x );
-					minY = b3MinInt( minY, y );
-					minZ = b3MinInt( minZ, z );
-					maxX = b3MaxInt( maxX, x );
-					maxY = b3MaxInt( maxY, y );
-					maxZ = b3MaxInt( maxZ, z );
-				}
-			}
-		}
-	}
-
-	b3Vec3 gridExtent =
-		b3Mul( data->spacing, (b3Vec3){ (float)( data->countX - 1 ), (float)( data->countY - 1 ), (float)( data->countZ - 1 ) } );
-	b3Vec3 gridUpper = b3Add( data->origin, gridExtent );
-	if ( b3IsValidVec3( gridExtent ) == false || b3IsValidVec3( gridUpper ) == false )
+	size_t sampleCount;
+	b3AABB aabb;
+	if ( b3ValidateSDFDef( data, &sampleCount, &aabb ) == false )
 	{
 		return NULL;
 	}
@@ -371,18 +403,7 @@ b3SDFData* b3CreateSDF( const b3SDFDef* data )
 	sdf->countY = data->countY;
 	sdf->countZ = data->countZ;
 	sdf->distancesOffset = distancesOffset;
-	if ( maxX >= 0 )
-	{
-		b3Vec3 lowerIndex = { (float)b3MaxInt( minX - 1, 0 ), (float)b3MaxInt( minY - 1, 0 ), (float)b3MaxInt( minZ - 1, 0 ) };
-		b3Vec3 upperIndex = { (float)b3MinInt( maxX + 1, data->countX - 1 ), (float)b3MinInt( maxY + 1, data->countY - 1 ),
-							  (float)b3MinInt( maxZ + 1, data->countZ - 1 ) };
-		sdf->aabb.lowerBound = b3Add( data->origin, b3Mul( data->spacing, lowerIndex ) );
-		sdf->aabb.upperBound = b3Add( data->origin, b3Mul( data->spacing, upperIndex ) );
-	}
-	else
-	{
-		sdf->aabb = (b3AABB){ data->origin, data->origin };
-	}
+	sdf->aabb = aabb;
 
 	float* distances = (float*)( (intptr_t)sdf + distancesOffset );
 	memcpy( distances, data->distances, sampleCount * sizeof( float ) );
@@ -390,6 +411,39 @@ b3SDFData* b3CreateSDF( const b3SDFDef* data )
 	sdf->hash = 0;
 	sdf->hash = b3NonZeroHash( b3Hash( B3_HASH_INIT, (const uint8_t*)sdf, sdf->byteCount ) );
 	return sdf;
+}
+
+bool b3UpdateSDF( b3SDFData* sdf, const b3SDFDef* data )
+{
+	if ( sdf == NULL || sdf->version != B3_SDF_VERSION )
+	{
+		return false;
+	}
+
+	size_t sampleCount;
+	b3AABB aabb;
+	if ( b3ValidateSDFDef( data, &sampleCount, &aabb ) == false )
+	{
+		return false;
+	}
+
+	size_t oldSampleCount = (size_t)sdf->countX * (size_t)sdf->countY * (size_t)sdf->countZ;
+	if ( sampleCount != oldSampleCount )
+	{
+		return false;
+	}
+
+	sdf->aabb = aabb;
+	sdf->origin = data->origin;
+	sdf->spacing = data->spacing;
+	sdf->countX = data->countX;
+	sdf->countY = data->countY;
+	sdf->countZ = data->countZ;
+	memmove( (void*)b3GetSDFDistances( sdf ), data->distances, sampleCount * sizeof( float ) );
+
+	sdf->hash = 0;
+	sdf->hash = b3NonZeroHash( b3Hash( B3_HASH_INIT, (const uint8_t*)sdf, sdf->byteCount ) );
+	return true;
 }
 
 void b3DestroySDF( b3SDFData* sdf )
