@@ -74,12 +74,12 @@ static int b3SDFIndex( int countX, int countY, int x, int y, int z )
 	return x + countX * ( y + countY * z );
 }
 
-static b3Vec3 b3SDFGridPoint( const b3SDFDef* data, int x, int y, int z )
+static b3Vec3 b3SDFGridPoint( const b3SDFData* sdf, int x, int y, int z )
 {
-	return b3Add( data->origin, b3Mul( data->spacing, (b3Vec3){ (float)x, (float)y, (float)z } ) );
+	return b3Add( sdf->origin, b3Mul( sdf->spacing, (b3Vec3){ (float)x, (float)y, (float)z } ) );
 }
 
-static bool b3ValidateSDFDef( const b3SDFDef* data, size_t* sampleCount, b3AABB* aabb )
+static bool b3ValidateSDFDef( const b3SDFDef* data, size_t* sampleCount, b3AABB* aabb, float* distanceScale )
 {
 	if ( data == NULL || data->distances == NULL || data->countX < 2 || data->countY < 2 || data->countZ < 2 )
 	{
@@ -111,6 +111,9 @@ static bool b3ValidateSDFDef( const b3SDFDef* data, size_t* sampleCount, b3AABB*
 	int maxX = -1;
 	int maxY = -1;
 	int maxZ = -1;
+#if B3_SDF_STORAGE_IS_I8
+	float maximumDistance = 0.0f;
+#endif
 	for ( int z = 0; z < data->countZ; ++z )
 	{
 		for ( int y = 0; y < data->countY; ++y )
@@ -122,6 +125,9 @@ static bool b3ValidateSDFDef( const b3SDFDef* data, size_t* sampleCount, b3AABB*
 				{
 					return false;
 				}
+#if B3_SDF_STORAGE_IS_I8
+				maximumDistance = b3MaxFloat( maximumDistance, fabsf( distance ) );
+#endif
 				if ( distance <= 0.0f )
 				{
 					minX = b3MinInt( minX, x );
@@ -157,24 +163,52 @@ static bool b3ValidateSDFDef( const b3SDFDef* data, size_t* sampleCount, b3AABB*
 	}
 
 	*sampleCount = count;
+#if B3_SDF_STORAGE_IS_I8
+	*distanceScale = maximumDistance > 0.0f ? maximumDistance / 127.0f : 1.0f;
+#else
+	*distanceScale = 1.0f;
+#endif
 	return true;
 }
 
-static uint32_t b3LoadSDFCellValues( float values[8], const float* distances, int countX, int countY, int x, int y, int z,
-									 bool* hasExactZero )
+static float b3LoadSDFDistance( const b3SDFData* sdf, int index )
 {
-	int strideY = countX;
-	int strideZ = countX * countY;
+	return (float)b3GetSDFDistances( sdf )[index] * b3GetSDFDistanceScale( sdf );
+}
+
+static void b3StoreSDFDistances( b3SDFData* sdf, const float* distances, size_t sampleCount )
+{
+	b3SDFStorageValue* storage = (b3SDFStorageValue*)( (intptr_t)sdf + sdf->distancesOffset );
+#if B3_SDF_STORAGE_IS_I8
+	for ( size_t i = 0; i < sampleCount; ++i )
+	{
+		float distance = distances[i];
+		int value = (int)roundf( distance / b3GetSDFDistanceScale( sdf ) );
+		value = b3ClampInt( value, -127, 127 );
+		if ( value == 0 && distance != 0.0f )
+		{
+			value = distance < 0.0f ? -1 : 1;
+		}
+		storage[i] = (int8_t)value;
+	}
+#else
+	memmove( storage, distances, sampleCount * sizeof( float ) );
+#endif
+}
+
+static uint32_t b3LoadSDFCellValues( float values[8], const b3SDFData* sdf, int x, int y, int z, bool* hasExactZero )
+{
+	int strideY = sdf->countX;
+	int strideZ = sdf->countX * sdf->countY;
 	int index = x + strideY * y + strideZ * z;
-	const float* cellDistances = distances + index;
-	values[0] = cellDistances[0];
-	values[1] = cellDistances[1];
-	values[2] = cellDistances[strideY + 1];
-	values[3] = cellDistances[strideY];
-	values[4] = cellDistances[strideZ];
-	values[5] = cellDistances[strideZ + 1];
-	values[6] = cellDistances[strideZ + strideY + 1];
-	values[7] = cellDistances[strideZ + strideY];
+	values[0] = b3LoadSDFDistance( sdf, index );
+	values[1] = b3LoadSDFDistance( sdf, index + 1 );
+	values[2] = b3LoadSDFDistance( sdf, index + strideY + 1 );
+	values[3] = b3LoadSDFDistance( sdf, index + strideY );
+	values[4] = b3LoadSDFDistance( sdf, index + strideZ );
+	values[5] = b3LoadSDFDistance( sdf, index + strideZ + 1 );
+	values[6] = b3LoadSDFDistance( sdf, index + strideZ + strideY + 1 );
+	values[7] = b3LoadSDFDistance( sdf, index + strideZ + strideY );
 
 	uint32_t insideMask = 0;
 	bool exactZero = false;
@@ -311,19 +345,19 @@ static int b3SDFCellTriangles( const b3Vec3* points, const float* values, b3SDFB
 	return triangleCount;
 }
 
-static int b3SDFBuildCell( const b3SDFDef* data, int x, int y, int z, b3SDFBuildTriangle* output, bool* hasExactZero )
+static int b3SDFBuildCell( const b3SDFData* sdf, int x, int y, int z, b3SDFBuildTriangle* output, bool* hasExactZero )
 {
 	float values[8];
-	uint32_t insideMask = b3LoadSDFCellValues( values, data->distances, data->countX, data->countY, x, y, z, hasExactZero );
+	uint32_t insideMask = b3LoadSDFCellValues( values, sdf, x, y, z, hasExactZero );
 	if ( insideMask == 0 || insideMask == 0xFFu )
 	{
 		return 0;
 	}
 
-	b3Vec3 p = b3SDFGridPoint( data, x, y, z );
-	b3Vec3 dx = { data->spacing.x, 0.0f, 0.0f };
-	b3Vec3 dy = { 0.0f, data->spacing.y, 0.0f };
-	b3Vec3 dz = { 0.0f, 0.0f, data->spacing.z };
+	b3Vec3 p = b3SDFGridPoint( sdf, x, y, z );
+	b3Vec3 dx = { sdf->spacing.x, 0.0f, 0.0f };
+	b3Vec3 dy = { 0.0f, sdf->spacing.y, 0.0f };
+	b3Vec3 dz = { 0.0f, 0.0f, sdf->spacing.z };
 	b3Vec3 points[8] = {
 		p,
 		b3Add( p, dx ),
@@ -345,7 +379,6 @@ static float b3SDFSample( const b3SDFData* sdf, b3Vec3 point )
 		return FLT_MAX;
 	}
 
-	const float* distances = b3GetSDFDistances( sdf );
 	b3Vec3 relative = b3Sub( point, sdf->origin );
 	b3Vec3 q = { relative.x / sdf->spacing.x, relative.y / sdf->spacing.y, relative.z / sdf->spacing.z };
 	int x = b3ClampInt( (int)floorf( q.x ), 0, sdf->countX - 2 );
@@ -364,7 +397,8 @@ static float b3SDFSample( const b3SDFData* sdf, b3Vec3 point )
 	};
 	for ( int i = 0; i < 8; ++i )
 	{
-		value[i] = distances[b3SDFIndex( sdf->countX, sdf->countY, x + offsets[i][0], y + offsets[i][1], z + offsets[i][2] )];
+		value[i] = b3LoadSDFDistance(
+			sdf, b3SDFIndex( sdf->countX, sdf->countY, x + offsets[i][0], y + offsets[i][1], z + offsets[i][2] ) );
 	}
 
 	float x0 = b3LerpFloat( value[0], value[1], fx );
@@ -380,14 +414,15 @@ b3SDFData* b3CreateSDF( const b3SDFDef* data )
 {
 	size_t sampleCount;
 	b3AABB aabb;
-	if ( b3ValidateSDFDef( data, &sampleCount, &aabb ) == false )
+	float distanceScale;
+	if ( b3ValidateSDFDef( data, &sampleCount, &aabb, &distanceScale ) == false )
 	{
 		return NULL;
 	}
 
 	size_t byteCount = b3AlignUp8( sizeof( b3SDFData ) );
 	int distancesOffset = (int)byteCount;
-	byteCount += b3AlignUp8( sampleCount * sizeof( float ) );
+	byteCount += b3AlignUp8( sampleCount * sizeof( b3SDFStorageValue ) );
 	if ( byteCount > (size_t)INT_MAX )
 	{
 		return NULL;
@@ -402,11 +437,14 @@ b3SDFData* b3CreateSDF( const b3SDFDef* data )
 	sdf->countX = data->countX;
 	sdf->countY = data->countY;
 	sdf->countZ = data->countZ;
+#if B3_SDF_STORAGE_IS_I8
+	sdf->distanceScale = distanceScale;
+#else
+	B3_UNUSED( distanceScale );
+#endif
 	sdf->distancesOffset = distancesOffset;
 	sdf->aabb = aabb;
-
-	float* distances = (float*)( (intptr_t)sdf + distancesOffset );
-	memcpy( distances, data->distances, sampleCount * sizeof( float ) );
+	b3StoreSDFDistances( sdf, data->distances, sampleCount );
 
 	sdf->hash = 0;
 	sdf->hash = b3NonZeroHash( b3Hash( B3_HASH_INIT, (const uint8_t*)sdf, sdf->byteCount ) );
@@ -422,7 +460,8 @@ bool b3UpdateSDF( b3SDFData* sdf, const b3SDFDef* data )
 
 	size_t sampleCount;
 	b3AABB aabb;
-	if ( b3ValidateSDFDef( data, &sampleCount, &aabb ) == false )
+	float distanceScale;
+	if ( b3ValidateSDFDef( data, &sampleCount, &aabb, &distanceScale ) == false )
 	{
 		return false;
 	}
@@ -439,7 +478,12 @@ bool b3UpdateSDF( b3SDFData* sdf, const b3SDFDef* data )
 	sdf->countX = data->countX;
 	sdf->countY = data->countY;
 	sdf->countZ = data->countZ;
-	memmove( (void*)b3GetSDFDistances( sdf ), data->distances, sampleCount * sizeof( float ) );
+#if B3_SDF_STORAGE_IS_I8
+	sdf->distanceScale = distanceScale;
+#else
+	B3_UNUSED( distanceScale );
+#endif
+	b3StoreSDFDistances( sdf, data->distances, sampleCount );
 
 	sdf->hash = 0;
 	sdf->hash = b3NonZeroHash( b3Hash( B3_HASH_INIT, (const uint8_t*)sdf, sdf->byteCount ) );
@@ -609,10 +653,10 @@ b3CastOutput b3RayCastSDF( const b3SDFData* shape, const b3RayCastInput* input )
 	return context.output;
 }
 
-static int b3BuildSDFCellUniqueLocal( const b3SDFDef* source, int x, int y, int z, b3SDFBuildTriangle* triangles,
+static int b3BuildSDFCellUniqueLocal( const b3SDFData* sdf, int x, int y, int z, b3SDFBuildTriangle* triangles,
 									  bool* hasExactZero )
 {
-	int candidateCount = b3SDFBuildCell( source, x, y, z, triangles, hasExactZero );
+	int candidateCount = b3SDFBuildCell( sdf, x, y, z, triangles, hasExactZero );
 	if ( *hasExactZero == false )
 	{
 		return candidateCount;
@@ -639,11 +683,11 @@ static int b3BuildSDFCellUniqueLocal( const b3SDFDef* source, int x, int y, int 
 	return count;
 }
 
-static bool b3SDFCellHasTriangle( const b3SDFDef* source, int x, int y, int z, const b3SDFBuildTriangle* triangle )
+static bool b3SDFCellHasTriangle( const b3SDFData* sdf, int x, int y, int z, const b3SDFBuildTriangle* triangle )
 {
 	b3SDFBuildTriangle triangles[12];
 	bool hasExactZero;
-	int count = b3BuildSDFCellUniqueLocal( source, x, y, z, triangles, &hasExactZero );
+	int count = b3BuildSDFCellUniqueLocal( sdf, x, y, z, triangles, &hasExactZero );
 	for ( int i = 0; i < count; ++i )
 	{
 		if ( b3SameSDFTriangleGeometry( triangles + i, triangle ) )
@@ -656,16 +700,8 @@ static bool b3SDFCellHasTriangle( const b3SDFDef* source, int x, int y, int z, c
 
 static int b3BuildSDFCellUnique( const b3SDFData* sdf, int x, int y, int z, b3SDFBuildTriangle* triangles )
 {
-	b3SDFDef source = {
-		.distances = (float*)b3GetSDFDistances( sdf ),
-		.origin = sdf->origin,
-		.spacing = sdf->spacing,
-		.countX = sdf->countX,
-		.countY = sdf->countY,
-		.countZ = sdf->countZ,
-	};
 	bool hasExactZero;
-	int candidateCount = b3BuildSDFCellUniqueLocal( &source, x, y, z, triangles, &hasExactZero );
+	int candidateCount = b3BuildSDFCellUniqueLocal( sdf, x, y, z, triangles, &hasExactZero );
 	if ( hasExactZero == false )
 	{
 		return candidateCount;
@@ -679,16 +715,16 @@ static int b3BuildSDFCellUnique( const b3SDFData* sdf, int x, int y, int z, b3SD
 		// Prefer the adjacent lower-index cell for a surface exactly on a cell
 		// boundary, but only if that cell generates the same triangle. Exact-zero
 		// samples can make only one of the two cells generate the surface.
-		b3Vec3 lower = b3SDFGridPoint( &source, x, y, z );
+		b3Vec3 lower = b3SDFGridPoint( sdf, x, y, z );
 		bool onLowerX = x > 0 && candidate.vertices[0].x == lower.x && candidate.vertices[1].x == lower.x &&
 						candidate.vertices[2].x == lower.x;
 		bool onLowerY = y > 0 && candidate.vertices[0].y == lower.y && candidate.vertices[1].y == lower.y &&
 						candidate.vertices[2].y == lower.y;
 		bool onLowerZ = z > 0 && candidate.vertices[0].z == lower.z && candidate.vertices[1].z == lower.z &&
 						candidate.vertices[2].z == lower.z;
-		if ( ( onLowerX && b3SDFCellHasTriangle( &source, x - 1, y, z, &candidate ) ) ||
-			 ( onLowerY && b3SDFCellHasTriangle( &source, x, y - 1, z, &candidate ) ) ||
-			 ( onLowerZ && b3SDFCellHasTriangle( &source, x, y, z - 1, &candidate ) ) )
+		if ( ( onLowerX && b3SDFCellHasTriangle( sdf, x - 1, y, z, &candidate ) ) ||
+			 ( onLowerY && b3SDFCellHasTriangle( sdf, x, y - 1, z, &candidate ) ) ||
+			 ( onLowerZ && b3SDFCellHasTriangle( sdf, x, y, z - 1, &candidate ) ) )
 		{
 			continue;
 		}

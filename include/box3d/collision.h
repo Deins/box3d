@@ -426,15 +426,27 @@ B3_API b3HeightFieldData* b3LoadHeightField( const char* fileName );
  * @{
  */
 
-/// Get read-only SDF samples in x-major order.
-B3_INLINE const float* b3GetSDFDistances( const b3SDFData* sdf )
+/// Get read-only stored SDF samples in x-major order. When B3_SDF_STORAGE_IS_I8 is true, multiply each value by
+/// b3GetSDFDistanceScale to obtain its distance in local length units.
+B3_INLINE const b3SDFStorageValue* b3GetSDFDistances( const b3SDFData* sdf )
 {
 	if ( sdf->distancesOffset == 0 )
 	{
 		return NULL;
 	}
 
-	return (const float*)( (intptr_t)sdf + sdf->distancesOffset );
+	return (const b3SDFStorageValue*)( (intptr_t)sdf + sdf->distancesOffset );
+}
+
+/// Get the scale applied to stored SDF samples. This is 1 for float storage.
+B3_INLINE float b3GetSDFDistanceScale( const b3SDFData* sdf )
+{
+#if B3_SDF_STORAGE_IS_I8
+	return sdf->distanceScale;
+#else
+	(void)sdf;
+	return 1.0f;
+#endif
 }
 
 /// Create a generic sampled signed-distance field.

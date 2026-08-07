@@ -238,6 +238,13 @@ b3SDFData* sdf = b3CreateSDF(&def);
 b3ShapeId id = b3CreateSDFShape(bodyId, &shapeDef, sdf);
 ```
 
+By default, samples are stored as 32-bit floats. To reduce SDF sample storage
+by 75%, configure with `-DBOX3D_SDF_USE_I8=ON` (or define
+`BOX3D_SDF_USE_I8` when building without CMake). Input samples remain floats;
+Box3D quantizes each field to signed 8-bit values with a per-field scale. The
+public `B3_SDF_STORAGE_IS_I8` and `B3_SDF_STORAGE_TYPE` macros describe the
+selected storage format. SDF data is not binary-compatible across these modes.
+
 The sampled field uses x-major indexing:
 `x + countX * (y + countY * z)`. The field bounds are the sample-grid bounds;
 make sure the grid includes a positive-distance margin around the solid. SDF
@@ -246,8 +253,21 @@ tests also recognize queries fully inside the negative region. Localized queries
 are proportional to the number of overlapped cells; a query spanning the whole
 grid visits the whole grid. The broad-phase bounds are derived from non-positive
 samples and their adjacent cells, so positive padding does not enlarge the shape's
-broad-phase proxy. Destroy the SDF after
-destroying the shape that references it:
+broad-phase proxy.
+
+You can update an SDF in place when the new grid has the same number of samples.
+After a successful update, call `b3Shape_SetSDF` for each shape that references
+the SDF. This refreshes its contacts and broad-phase proxy. Perform both calls
+outside `b3World_Step`:
+
+```c
+if (b3UpdateSDF(sdf, &def))
+{
+    b3Shape_SetSDF(id, sdf);
+}
+```
+
+Destroy the SDF after destroying the shape that references it:
 
 ```c
 b3DestroySDF(sdf);
