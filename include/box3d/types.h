@@ -2343,8 +2343,24 @@ typedef struct b3HeightFieldData
  * @{
  */
 
+#if defined( BOX3D_SDF_USE_I8 )
+/// True when SDF samples are stored as signed 8-bit values.
+#define B3_SDF_STORAGE_IS_I8 1
+/// The type used to store SDF samples in b3SDFData.
+#define B3_SDF_STORAGE_TYPE int8_t
+#else
+/// True when SDF samples are stored as signed 8-bit values.
+#define B3_SDF_STORAGE_IS_I8 0
+/// The type used to store SDF samples in b3SDFData.
+#define B3_SDF_STORAGE_TYPE float
+#endif
+
+/// The type used to store SDF samples in b3SDFData.
+typedef B3_SDF_STORAGE_TYPE b3SDFStorageValue;
+
 /// Data used to create a sampled signed-distance field. Distances are signed with
-/// negative values inside the solid and positive values outside the solid.
+/// negative values inside the solid and positive values outside the solid. Input samples are always floats; when
+/// B3_SDF_STORAGE_IS_I8 is true, Box3D quantizes them for internal storage.
 typedef struct b3SDFDef
 {
 	/// Scalar samples in x-major order: x + countX * (y + countY * z).
@@ -2362,7 +2378,11 @@ typedef struct b3SDFDef
 } b3SDFDef;
 
 /// 64-bit SDF version. Useful for validating serialized data.
+#if B3_SDF_STORAGE_IS_I8
+#define B3_SDF_VERSION 0xE0ED9A0D2D318871ull
+#else
 #define B3_SDF_VERSION 0xD69F5160048763A1ull
+#endif
 
 /// A sampled signed-distance field. Surface triangles are generated on demand
 /// from the cells touched by a collision query.
@@ -2390,7 +2410,12 @@ typedef struct b3SDFData
 	int countY;
 	int countZ;
 
-	/// Offset of the float sample array from the struct address.
+#if B3_SDF_STORAGE_IS_I8
+	/// Scale applied to signed 8-bit stored sample values.
+	float distanceScale;
+#endif
+
+	/// Offset of the b3SDFStorageValue sample array from the struct address.
 	int distancesOffset;
 } b3SDFData;
 
@@ -3036,7 +3061,7 @@ typedef struct b3DebugShape
 typedef struct b3DebugDraw
 {
 	/// Draws a user shape. The userShape pointer is owned by the application and is known to Box3D as
-	/// an opaque pointer returned from b3CreateDebugShapeCallback. When this is called the drawn shape has 
+	/// an opaque pointer returned from b3CreateDebugShapeCallback. When this is called the drawn shape has
 	/// passed a culling test against drawingBounds below.
 	void ( *DrawShapeFcn )( void* userShape, b3WorldTransform transform, b3HexColor color, void* context );
 

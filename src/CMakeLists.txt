@@ -172,6 +172,12 @@ if (BOX3D_DOUBLE_PRECISION)
 	target_compile_definitions(box3d PUBLIC BOX3D_DOUBLE_PRECISION)
 endif()
 
+if (BOX3D_SDF_USE_I8)
+	message(STATUS "Box3D SDF int8 storage ON")
+	# PUBLIC: this changes b3SDFData's layout and the b3GetSDFDistances return type.
+	target_compile_definitions(box3d PUBLIC BOX3D_SDF_USE_I8)
+endif()
+
 # Enable asserts in release with debug info
 target_compile_definitions(box3d PUBLIC "$<$<CONFIG:RELWITHDEBINFO>:B3_ENABLE_ASSERT>")
 

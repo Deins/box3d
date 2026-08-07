@@ -70,6 +70,15 @@ static int SDFCreateAndQuery( void )
 	ENSURE( sdf != NULL );
 	ENSURE( sdf->version == B3_SDF_VERSION );
 	ENSURE( sdf->byteCount < 4096 );
+	ENSURE( b3GetSDFDistances( sdf ) != NULL );
+#if B3_SDF_STORAGE_IS_I8
+	ENSURE( sizeof( b3SDFStorageValue ) == 1 );
+	ENSURE( sdf->byteCount < 1024 );
+	ENSURE( b3GetSDFDistanceScale( sdf ) > 0.0f );
+#else
+	ENSURE( sizeof( b3SDFStorageValue ) == sizeof( float ) );
+	ENSURE_SMALL( b3GetSDFDistanceScale( sdf ) - 1.0f, FLT_EPSILON );
+#endif
 	SDFQueryContext query = { .nonDegenerate = true };
 	b3QuerySDF( sdf, sdf->aabb, CountSDFTriangle, &query );
 	ENSURE( query.count > 0 );
@@ -201,6 +210,58 @@ static int SDFUpdate( void )
 	return 0;
 }
 
+static int SDFStorage( void )
+{
+	float distances[8] = { -127.0f, -31.5f, -0.25f, 0.0f, 0.25f, 31.5f, 63.0f, 127.0f };
+	b3SDFDef def = {
+		.distances = distances,
+		.spacing = { 1.0f, 1.0f, 1.0f },
+		.countX = 2,
+		.countY = 2,
+		.countZ = 2,
+	};
+	b3SDFData* sdf = b3CreateSDF( &def );
+	ENSURE( sdf != NULL );
+
+	const b3SDFStorageValue* stored = b3GetSDFDistances( sdf );
+	float scale = b3GetSDFDistanceScale( sdf );
+	for ( int i = 0; i < ARRAY_COUNT( distances ); ++i )
+	{
+		float restored = (float)stored[i] * scale;
+#if B3_SDF_STORAGE_IS_I8
+		ENSURE( ( stored[i] < 0 ) == ( distances[i] < 0.0f ) );
+		ENSURE( ( stored[i] > 0 ) == ( distances[i] > 0.0f ) );
+		ENSURE_SMALL( restored - distances[i], scale );
+#else
+		ENSURE_SMALL( restored - distances[i], FLT_EPSILON );
+#endif
+	}
+
+	float updatedDistances[8] = { -12.7f, -3.15f, -0.025f, 0.0f, 0.025f, 3.15f, 6.3f, 12.7f };
+	def.distances = updatedDistances;
+	ENSURE( b3UpdateSDF( sdf, &def ) );
+#if B3_SDF_STORAGE_IS_I8
+	ENSURE( b3GetSDFDistanceScale( sdf ) < scale );
+#endif
+
+	stored = b3GetSDFDistances( sdf );
+	scale = b3GetSDFDistanceScale( sdf );
+	for ( int i = 0; i < ARRAY_COUNT( updatedDistances ); ++i )
+	{
+		float restored = (float)stored[i] * scale;
+#if B3_SDF_STORAGE_IS_I8
+		ENSURE( ( stored[i] < 0 ) == ( updatedDistances[i] < 0.0f ) );
+		ENSURE( ( stored[i] > 0 ) == ( updatedDistances[i] > 0.0f ) );
+		ENSURE_SMALL( restored - updatedDistances[i], scale );
+#else
+		ENSURE_SMALL( restored - updatedDistances[i], FLT_EPSILON );
+#endif
+	}
+
+	b3DestroySDF( sdf );
+	return 0;
+}
+
 static int SDFStaticOnly( void )
 {
 	b3SDFData* sdf = MakeBoxSDF();
@@ -267,6 +328,7 @@ int SDFTest( void )
 	RUN_SUBTEST( SDFCreateAndQuery );
 	RUN_SUBTEST( SDFExactZeroSamples );
 	RUN_SUBTEST( SDFUpdate );
+	RUN_SUBTEST( SDFStorage );
 	RUN_SUBTEST( SDFStaticOnly );
 	return 0;
 }
