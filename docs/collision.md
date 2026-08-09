@@ -216,18 +216,19 @@ Destroy the height field after the shape referencing it has been destroyed:
 b3DestroyHeightField(hf);
 ```
 
-### Signed-Distance Fields
+### Sampled Scalar Fields
 
-Signed-distance fields describe a regular 3D sample grid. Samples must be negative
-inside the solid and positive outside it. SDF shapes are static-only. Box3D stores
-the samples directly. Collision queries generate zero-surface triangles only for
+SDF shapes describe a regular 3D unsigned sample grid. Samples above the fixed
+half-integer `B3_SDF_ISOVALUE` are solid and samples below it are empty. SDF shapes
+are static-only. Box3D stores the samples directly. Collision queries generate surface triangles only for
 the grid cells touched by the query, so creation does not bake a mesh or BVH:
 
 ```c
-float distances[countX * countY * countZ];
+b3SDFStorageValue samples[countX * countY * countZ];
 
 b3SDFDef def = {0};
-def.distances = distances;
+def.samples       = samples;
+def.distanceScale = 0.01f;
 def.origin    = (b3Vec3){-10.0f, -4.0f, -10.0f};
 def.spacing   = (b3Vec3){0.25f, 0.25f, 0.25f};
 def.countX    = countX;
@@ -238,21 +239,20 @@ b3SDFData* sdf = b3CreateSDF(&def);
 b3ShapeId id = b3CreateSDFShape(bodyId, &shapeDef, sdf);
 ```
 
-By default, samples are stored as 32-bit floats. To reduce SDF sample storage
-by 75%, configure with `-DBOX3D_SDF_USE_I8=ON` (or define
-`BOX3D_SDF_USE_I8` when building without CMake). Input samples remain floats;
-Box3D quantizes each field to signed 8-bit values with a per-field scale. The
-public `B3_SDF_STORAGE_IS_I8` and `B3_SDF_STORAGE_TYPE` macros describe the
-selected storage format. SDF data is not binary-compatible across these modes.
+`distanceScale` is the local length represented by one integer step. Use a fixed
+scale for neighboring fields so shared samples reconstruct identically. A narrow
+band may saturate far from the surface because collision extraction only needs
+signs and relative values on crossing edges. The half-integer isovalue ensures
+that no stored sample lies exactly on the surface.
 
 The sampled field uses x-major indexing:
 `x + countX * (y + countY * z)`. The field bounds are the sample-grid bounds;
-make sure the grid includes a positive-distance margin around the solid. SDF
+make sure the grid includes an empty margin around the solid. SDF
 ray casts, shape casts, and contacts sample the relevant cells at runtime. Overlap
 tests also recognize queries fully inside the negative region. Localized queries
 are proportional to the number of overlapped cells; a query spanning the whole
-grid visits the whole grid. The broad-phase bounds are derived from non-positive
-samples and their adjacent cells, so positive padding does not enlarge the shape's
+grid visits the whole grid. The broad-phase bounds are derived from solid
+samples and their adjacent cells, so empty padding does not enlarge the shape's
 broad-phase proxy.
 
 You can update an SDF in place when the new grid has the same number of samples.

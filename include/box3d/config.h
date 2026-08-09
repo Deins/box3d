@@ -17,9 +17,6 @@
 // Large world mode. Stores world positions in double precision. Affects ABI.
 //#define BOX3D_DOUBLE_PRECISION
 
-// Store SDF samples as quantized signed 8-bit values. Affects ABI and SDF precision.
-//#define BOX3D_SDF_USE_I8
-
 // Build the scalar fallback instead of SSE2/NEON.
 //#define BOX3D_DISABLE_SIMD
 

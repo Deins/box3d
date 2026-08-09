@@ -450,7 +450,7 @@ typedef enum b3ShapeType
 	/// A sphere with an offset
 	b3_sphereShape,
 
-	/// A sampled signed-distance field
+	/// A sampled scalar field
 	b3_sdfShape,
 
 	/// The number of shape types
@@ -2338,33 +2338,26 @@ typedef struct b3HeightFieldData
 /**@}*/ // height_field
 
 /**
- * @defgroup sdf Signed Distance Field
- * @brief Static sampled signed-distance collision shape
+ * @defgroup sdf Sampled Scalar Field
+ * @brief Static sampled scalar-field collision shape
  * @{
  */
 
-#if defined( BOX3D_SDF_USE_I8 )
-/// True when SDF samples are stored as signed 8-bit values.
-#define B3_SDF_STORAGE_IS_I8 1
-/// The type used to store SDF samples in b3SDFData.
-#define B3_SDF_STORAGE_TYPE int8_t
-#else
-/// True when SDF samples are stored as signed 8-bit values.
-#define B3_SDF_STORAGE_IS_I8 0
-/// The type used to store SDF samples in b3SDFData.
-#define B3_SDF_STORAGE_TYPE float
-#endif
+/// Unsigned scalar-field sample. Values above B3_SDF_ISOVALUE are solid.
+typedef uint8_t b3SDFStorageValue;
 
-/// The type used to store SDF samples in b3SDFData.
-typedef B3_SDF_STORAGE_TYPE b3SDFStorageValue;
+/// Half-integer isovalue keeps every stored sample strictly on one side of the surface.
+#define B3_SDF_ISOVALUE 127.5f
 
-/// Data used to create a sampled signed-distance field. Distances are signed with
-/// negative values inside the solid and positive values outside the solid. Input samples are always floats; when
-/// B3_SDF_STORAGE_IS_I8 is true, Box3D quantizes them for internal storage.
+/// Data used to create a sampled scalar field. Samples above the isovalue are
+/// inside the solid and samples below it are outside.
 typedef struct b3SDFDef
 {
 	/// Scalar samples in x-major order: x + countX * (y + countY * z).
-	float* distances;
+	const b3SDFStorageValue* samples;
+
+	/// Local length represented by one integer sample step.
+	float distanceScale;
 
 	/// Position of sample (0, 0, 0) in local space.
 	b3Vec3 origin;
@@ -2378,13 +2371,9 @@ typedef struct b3SDFDef
 } b3SDFDef;
 
 /// 64-bit SDF version. Useful for validating serialized data.
-#if B3_SDF_STORAGE_IS_I8
-#define B3_SDF_VERSION 0xE0ED9A0D2D318871ull
-#else
-#define B3_SDF_VERSION 0xD69F5160048763A1ull
-#endif
+#define B3_SDF_VERSION 0x2B1AB7906C4513D4ull
 
-/// A sampled signed-distance field. Surface triangles are generated on demand
+/// A sampled scalar field. Surface triangles are generated on demand
 /// from the cells touched by a collision query.
 /// @note This data structure has data hanging off the end and cannot be directly copied.
 typedef struct b3SDFData
@@ -2410,13 +2399,11 @@ typedef struct b3SDFData
 	int countY;
 	int countZ;
 
-#if B3_SDF_STORAGE_IS_I8
-	/// Scale applied to signed 8-bit stored sample values.
+	/// Local length represented by one integer sample step.
 	float distanceScale;
-#endif
 
 	/// Offset of the b3SDFStorageValue sample array from the struct address.
-	int distancesOffset;
+	int samplesOffset;
 } b3SDFData;
 
 /**@}*/ // sdf
@@ -3048,7 +3035,7 @@ typedef struct b3DebugShape
 		const b3Capsule* capsule;			  ///< Capsule shape.
 		const b3CompoundData* compound;		  ///< Compound shape.
 		const b3HeightFieldData* heightField; ///< Height-field shape.
-		const b3SDFData* sdf;				  ///< Signed-distance-field shape.
+		const b3SDFData* sdf;				  ///< Sampled scalar-field shape.
 		const b3HullData* hull;				  ///< Convex hull shape.
 		const b3Mesh* mesh;					  ///< Mesh shape with scale.
 		const b3Sphere* sphere;				  ///< Sphere shape.

@@ -18,6 +18,14 @@ typedef struct SDFQueryContext
 	b3Vec3 normalSum;
 } SDFQueryContext;
 
+static b3SDFStorageValue EncodeSDFDistance( float distance, float distanceScale )
+{
+	float encoded = B3_SDF_ISOVALUE - distance / distanceScale;
+	int value = (int)roundf( b3ClampFloat( encoded, 0.0f, 255.0f ) );
+	value = distance < 0.0f ? b3MaxInt( value, 128 ) : b3MinInt( value, 127 );
+	return (b3SDFStorageValue)value;
+}
+
 static bool CountSDFTriangle( b3Vec3 a, b3Vec3 b, b3Vec3 c, int triangleIndex, void* rawContext )
 {
 	(void)triangleIndex;
@@ -34,7 +42,8 @@ static b3SDFData* MakeBoxSDF( void )
 	const int count = 9;
 	const float spacing = 0.5f;
 	const float halfExtent = 0.75f;
-	float* distances = (float*)malloc( (size_t)count * count * count * sizeof( float ) );
+	const float distanceScale = 0.02f;
+	b3SDFStorageValue* samples = malloc( (size_t)count * count * count * sizeof( b3SDFStorageValue ) );
 
 	for ( int z = 0; z < count; ++z )
 	{
@@ -47,20 +56,21 @@ static b3SDFData* MakeBoxSDF( void )
 				b3Vec3 outside = { b3MaxFloat( q.x, 0.0f ), b3MaxFloat( q.y, 0.0f ), b3MaxFloat( q.z, 0.0f ) };
 				float outsideDistance = b3Length( outside );
 				float insideDistance = b3MinFloat( b3MaxFloat( q.x, b3MaxFloat( q.y, q.z ) ), 0.0f );
-				distances[x + count * ( y + count * z )] = outsideDistance + insideDistance;
+				samples[x + count * ( y + count * z )] = EncodeSDFDistance( outsideDistance + insideDistance, distanceScale );
 			}
 		}
 	}
 
 	b3SDFDef def = { 0 };
-	def.distances = distances;
+	def.samples = samples;
+	def.distanceScale = distanceScale;
 	def.origin = (b3Vec3){ -2.0f, -2.0f, -2.0f };
 	def.spacing = (b3Vec3){ spacing, spacing, spacing };
 	def.countX = count;
 	def.countY = count;
 	def.countZ = count;
 	b3SDFData* sdf = b3CreateSDF( &def );
-	free( distances );
+	free( samples );
 	return sdf;
 }
 
@@ -70,15 +80,10 @@ static int SDFCreateAndQuery( void )
 	ENSURE( sdf != NULL );
 	ENSURE( sdf->version == B3_SDF_VERSION );
 	ENSURE( sdf->byteCount < 4096 );
-	ENSURE( b3GetSDFDistances( sdf ) != NULL );
-#if B3_SDF_STORAGE_IS_I8
+	ENSURE( b3GetSDFSamples( sdf ) != NULL );
 	ENSURE( sizeof( b3SDFStorageValue ) == 1 );
 	ENSURE( sdf->byteCount < 1024 );
-	ENSURE( b3GetSDFDistanceScale( sdf ) > 0.0f );
-#else
-	ENSURE( sizeof( b3SDFStorageValue ) == sizeof( float ) );
-	ENSURE_SMALL( b3GetSDFDistanceScale( sdf ) - 1.0f, FLT_EPSILON );
-#endif
+	ENSURE_SMALL( b3GetSDFDistanceScale( sdf ) - 0.02f, FLT_EPSILON );
 	SDFQueryContext query = { .nonDegenerate = true };
 	b3QuerySDF( sdf, sdf->aabb, CountSDFTriangle, &query );
 	ENSURE( query.count > 0 );
@@ -115,13 +120,14 @@ static int SDFCreateAndQuery( void )
 	return 0;
 }
 
-static int SDFExactZeroSamples( void )
+static int SDFHalfIntegerIsovalue( void )
 {
-	// A zero sample with both signs in the same cell used to emit repeated
-	// intersections and zero-area triangles.
-	float distances[8] = { 1.0f, 0.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+	// Integer samples cannot equal the half-integer isovalue, avoiding zero-area
+	// triangles caused by exact-zero lattice samples.
+	b3SDFStorageValue samples[8] = { 126, 127, 128, 128, 128, 128, 128, 128 };
 	b3SDFDef def = { 0 };
-	def.distances = distances;
+	def.samples = samples;
+	def.distanceScale = 1.0f;
 	def.spacing = b3Vec3_one;
 	def.countX = 2;
 	def.countY = 2;
@@ -135,41 +141,6 @@ static int SDFExactZeroSamples( void )
 	ENSURE( query.nonDegenerate );
 
 	b3DestroySDF( sdf );
-
-	// A zero-valued face shared by multiple tetrahedra must be emitted once.
-	float faceDistances[8] = { 0.0f, 0.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 0.0f };
-	def.distances = faceDistances;
-	sdf = b3CreateSDF( &def );
-	ENSURE( sdf != NULL );
-	query = (SDFQueryContext){ .nonDegenerate = true };
-	b3QuerySDF( sdf, sdf->aabb, CountSDFTriangle, &query );
-	ENSURE( query.count == 1 );
-	query = (SDFQueryContext){ .nonDegenerate = true };
-	b3AABB faceBounds = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 0.0f } };
-	b3QuerySDF( sdf, faceBounds, CountSDFTriangle, &query );
-	ENSURE( query.count == 1 );
-	b3DestroySDF( sdf );
-
-	// A complete zero-valued face between positive and negative sample planes
-	// must not be discarded in favor of the adjacent cell that has no crossing.
-	float planeDistances[12];
-	for ( int i = 0; i < 4; ++i )
-	{
-		planeDistances[i] = 1.0f;
-		planeDistances[4 + i] = 0.0f;
-		planeDistances[8 + i] = -1.0f;
-	}
-	def.distances = planeDistances;
-	def.origin = (b3Vec3){ -1.0f, -1.0f, -1.0f };
-	def.countZ = 3;
-	sdf = b3CreateSDF( &def );
-	ENSURE( sdf != NULL );
-	query = (SDFQueryContext){ .nonDegenerate = true };
-	b3QuerySDF( sdf, sdf->aabb, CountSDFTriangle, &query );
-	ENSURE( query.count == 2 );
-	ENSURE( query.nonDegenerate );
-	ENSURE( query.normalSum.z < 0.0f );
-	b3DestroySDF( sdf );
 	return 0;
 }
 
@@ -179,14 +150,15 @@ static int SDFUpdate( void )
 	ENSURE( sdf != NULL );
 	uint32_t oldHash = sdf->hash;
 
-	float distances[9 * 9 * 9];
-	for ( int i = 0; i < ARRAY_COUNT( distances ); ++i )
+	b3SDFStorageValue samples[9 * 9 * 9];
+	for ( int i = 0; i < ARRAY_COUNT( samples ); ++i )
 	{
-		distances[i] = 1.0f;
+		samples[i] = 127;
 	}
 
 	b3SDFDef def = {
-		.distances = distances,
+		.samples = samples,
+		.distanceScale = 0.02f,
 		.origin = { 3.0f, 4.0f, 5.0f },
 		.spacing = { 0.5f, 0.5f, 0.5f },
 		.countX = 9,
@@ -212,9 +184,10 @@ static int SDFUpdate( void )
 
 static int SDFStorage( void )
 {
-	float distances[8] = { -127.0f, -31.5f, -0.25f, 0.0f, 0.25f, 31.5f, 63.0f, 127.0f };
+	b3SDFStorageValue samples[8] = { 0, 31, 127, 128, 129, 192, 224, 255 };
 	b3SDFDef def = {
-		.distances = distances,
+		.samples = samples,
+		.distanceScale = 0.25f,
 		.spacing = { 1.0f, 1.0f, 1.0f },
 		.countX = 2,
 		.countY = 2,
@@ -223,39 +196,21 @@ static int SDFStorage( void )
 	b3SDFData* sdf = b3CreateSDF( &def );
 	ENSURE( sdf != NULL );
 
-	const b3SDFStorageValue* stored = b3GetSDFDistances( sdf );
-	float scale = b3GetSDFDistanceScale( sdf );
-	for ( int i = 0; i < ARRAY_COUNT( distances ); ++i )
+	const b3SDFStorageValue* stored = b3GetSDFSamples( sdf );
+	for ( int i = 0; i < ARRAY_COUNT( samples ); ++i )
 	{
-		float restored = (float)stored[i] * scale;
-#if B3_SDF_STORAGE_IS_I8
-		ENSURE( ( stored[i] < 0 ) == ( distances[i] < 0.0f ) );
-		ENSURE( ( stored[i] > 0 ) == ( distances[i] > 0.0f ) );
-		ENSURE_SMALL( restored - distances[i], scale );
-#else
-		ENSURE_SMALL( restored - distances[i], FLT_EPSILON );
-#endif
+		ENSURE( stored[i] == samples[i] );
 	}
 
-	float updatedDistances[8] = { -12.7f, -3.15f, -0.025f, 0.0f, 0.025f, 3.15f, 6.3f, 12.7f };
-	def.distances = updatedDistances;
+	b3SDFStorageValue updatedSamples[8] = { 255, 224, 192, 129, 126, 63, 31, 0 };
+	def.samples = updatedSamples;
+	def.distanceScale = 0.125f;
 	ENSURE( b3UpdateSDF( sdf, &def ) );
-#if B3_SDF_STORAGE_IS_I8
-	ENSURE( b3GetSDFDistanceScale( sdf ) < scale );
-#endif
-
-	stored = b3GetSDFDistances( sdf );
-	scale = b3GetSDFDistanceScale( sdf );
-	for ( int i = 0; i < ARRAY_COUNT( updatedDistances ); ++i )
+	ENSURE_SMALL( b3GetSDFDistanceScale( sdf ) - 0.125f, FLT_EPSILON );
+	stored = b3GetSDFSamples( sdf );
+	for ( int i = 0; i < ARRAY_COUNT( updatedSamples ); ++i )
 	{
-		float restored = (float)stored[i] * scale;
-#if B3_SDF_STORAGE_IS_I8
-		ENSURE( ( stored[i] < 0 ) == ( updatedDistances[i] < 0.0f ) );
-		ENSURE( ( stored[i] > 0 ) == ( updatedDistances[i] > 0.0f ) );
-		ENSURE_SMALL( restored - updatedDistances[i], scale );
-#else
-		ENSURE_SMALL( restored - updatedDistances[i], FLT_EPSILON );
-#endif
+		ENSURE( stored[i] == updatedSamples[i] );
 	}
 
 	b3DestroySDF( sdf );
@@ -297,13 +252,14 @@ static int SDFStaticOnly( void )
 	}
 	ENSURE( b3Body_GetPosition( fallingBody ).y > 0.8f );
 
-	float emptyDistances[9 * 9 * 9];
-	for ( int i = 0; i < ARRAY_COUNT( emptyDistances ); ++i )
+	b3SDFStorageValue emptySamples[9 * 9 * 9];
+	for ( int i = 0; i < ARRAY_COUNT( emptySamples ); ++i )
 	{
-		emptyDistances[i] = 1.0f;
+		emptySamples[i] = 127;
 	}
 	b3SDFDef emptyDef = {
-		.distances = emptyDistances,
+		.samples = emptySamples,
+		.distanceScale = 0.02f,
 		.origin = { -2.0f, -2.0f, -2.0f },
 		.spacing = { 0.5f, 0.5f, 0.5f },
 		.countX = 9,
@@ -326,7 +282,7 @@ static int SDFStaticOnly( void )
 int SDFTest( void )
 {
 	RUN_SUBTEST( SDFCreateAndQuery );
-	RUN_SUBTEST( SDFExactZeroSamples );
+	RUN_SUBTEST( SDFHalfIntegerIsovalue );
 	RUN_SUBTEST( SDFUpdate );
 	RUN_SUBTEST( SDFStorage );
 	RUN_SUBTEST( SDFStaticOnly );

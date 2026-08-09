@@ -1152,14 +1152,15 @@ static int AllOps( void )
 	sdfBodyDef.type = b3_staticBody;
 	sdfBodyDef.position = (b3Pos){ 40.0f, 0.0f, 0.0f };
 	b3BodyId sdfBodyId = b3CreateBody( worldId, &sdfBodyDef );
-	float sdfDistances[27];
+	b3SDFStorageValue sdfSamples[27];
 	for ( int i = 0; i < 27; ++i )
 	{
-		sdfDistances[i] = 1.0f;
+		sdfSamples[i] = 127;
 	}
-	sdfDistances[13] = -1.0f;
+	sdfSamples[13] = 128;
 	b3SDFDef sdfDef = { 0 };
-	sdfDef.distances = sdfDistances;
+	sdfDef.samples = sdfSamples;
+	sdfDef.distanceScale = 1.0f;
 	sdfDef.origin = (b3Vec3){ -1.0f, -1.0f, -1.0f };
 	sdfDef.spacing = b3Vec3_one;
 	sdfDef.countX = 3;
