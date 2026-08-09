@@ -91,7 +91,6 @@ endif()
 option(BOX3D_DISABLE_SIMD "Disable SIMD math (slower)" OFF)
 option(BOX3D_COMPILE_WARNING_AS_ERROR "Compile warnings as errors" OFF)
 option(BOX3D_DOUBLE_PRECISION "Enable double precision for large worlds" OFF)
-option(BOX3D_SDF_USE_I8 "Store SDF samples as quantized int8 values" OFF)
 
 # These are read by the library build, so they must precede add_subdirectory(src),
 # otherwise the first configure and a re-configure produce different libraries.

@@ -19,56 +19,6 @@ typedef struct b3SDFBuildTriangle
 	b3Vec3 vertices[3];
 } b3SDFBuildTriangle;
 
-static int b3CompareSDFPoints( const b3Vec3* a, const b3Vec3* b )
-{
-	if ( a->x != b->x )
-	{
-		return a->x < b->x ? -1 : 1;
-	}
-	if ( a->y != b->y )
-	{
-		return a->y < b->y ? -1 : 1;
-	}
-	if ( a->z != b->z )
-	{
-		return a->z < b->z ? -1 : 1;
-	}
-	return 0;
-}
-
-static void b3CanonicalizeSDFTriangle( b3Vec3 output[3], const b3SDFBuildTriangle* triangle )
-{
-	output[0] = triangle->vertices[0];
-	output[1] = triangle->vertices[1];
-	output[2] = triangle->vertices[2];
-	for ( int i = 1; i < 3; ++i )
-	{
-		b3Vec3 point = output[i];
-		int j = i;
-		while ( j > 0 && b3CompareSDFPoints( output + j - 1, &point ) > 0 )
-		{
-			output[j] = output[j - 1];
-			j -= 1;
-		}
-		output[j] = point;
-	}
-}
-
-static bool b3SameSDFTriangleGeometry( const b3SDFBuildTriangle* a, const b3SDFBuildTriangle* b )
-{
-	b3Vec3 keyA[3], keyB[3];
-	b3CanonicalizeSDFTriangle( keyA, a );
-	b3CanonicalizeSDFTriangle( keyB, b );
-	for ( int i = 0; i < 3; ++i )
-	{
-		if ( b3CompareSDFPoints( keyA + i, keyB + i ) != 0 )
-		{
-			return false;
-		}
-	}
-	return true;
-}
-
 static int b3SDFIndex( int countX, int countY, int x, int y, int z )
 {
 	return x + countX * ( y + countY * z );
@@ -79,15 +29,16 @@ static b3Vec3 b3SDFGridPoint( const b3SDFData* sdf, int x, int y, int z )
 	return b3Add( sdf->origin, b3Mul( sdf->spacing, (b3Vec3){ (float)x, (float)y, (float)z } ) );
 }
 
-static bool b3ValidateSDFDef( const b3SDFDef* data, size_t* sampleCount, b3AABB* aabb, float* distanceScale )
+static bool b3ValidateSDFDef( const b3SDFDef* data, size_t* sampleCount, b3AABB* aabb )
 {
-	if ( data == NULL || data->distances == NULL || data->countX < 2 || data->countY < 2 || data->countZ < 2 )
+	if ( data == NULL || data->samples == NULL || data->countX < 2 || data->countY < 2 || data->countZ < 2 )
 	{
 		return false;
 	}
 
 	if ( b3IsValidVec3( data->origin ) == false || b3IsValidVec3( data->spacing ) == false || data->spacing.x <= 0.0f ||
-		 data->spacing.y <= 0.0f || data->spacing.z <= 0.0f )
+		 data->spacing.y <= 0.0f || data->spacing.z <= 0.0f || b3IsValidFloat( data->distanceScale ) == false ||
+		 data->distanceScale <= 0.0f )
 	{
 		return false;
 	}
@@ -111,24 +62,14 @@ static bool b3ValidateSDFDef( const b3SDFDef* data, size_t* sampleCount, b3AABB*
 	int maxX = -1;
 	int maxY = -1;
 	int maxZ = -1;
-#if B3_SDF_STORAGE_IS_I8
-	float maximumDistance = 0.0f;
-#endif
 	for ( int z = 0; z < data->countZ; ++z )
 	{
 		for ( int y = 0; y < data->countY; ++y )
 		{
 			for ( int x = 0; x < data->countX; ++x )
 			{
-				float distance = data->distances[b3SDFIndex( data->countX, data->countY, x, y, z )];
-				if ( b3IsValidFloat( distance ) == false )
-				{
-					return false;
-				}
-#if B3_SDF_STORAGE_IS_I8
-				maximumDistance = b3MaxFloat( maximumDistance, fabsf( distance ) );
-#endif
-				if ( distance <= 0.0f )
+				b3SDFStorageValue sample = data->samples[b3SDFIndex( data->countX, data->countY, x, y, z )];
+				if ( (float)sample > B3_SDF_ISOVALUE )
 				{
 					minX = b3MinInt( minX, x );
 					minY = b3MinInt( minY, y );
@@ -163,40 +104,21 @@ static bool b3ValidateSDFDef( const b3SDFDef* data, size_t* sampleCount, b3AABB*
 	}
 
 	*sampleCount = count;
-#if B3_SDF_STORAGE_IS_I8
-	*distanceScale = maximumDistance > 0.0f ? maximumDistance / 127.0f : 1.0f;
-#else
-	*distanceScale = 1.0f;
-#endif
 	return true;
 }
 
 static float b3LoadSDFDistance( const b3SDFData* sdf, int index )
 {
-	return (float)b3GetSDFDistances( sdf )[index] * b3GetSDFDistanceScale( sdf );
+	return ( B3_SDF_ISOVALUE - (float)b3GetSDFSamples( sdf )[index] ) * sdf->distanceScale;
 }
 
-static void b3StoreSDFDistances( b3SDFData* sdf, const float* distances, size_t sampleCount )
+static void b3StoreSDFSamples( b3SDFData* sdf, const b3SDFStorageValue* samples, size_t sampleCount )
 {
-	b3SDFStorageValue* storage = (b3SDFStorageValue*)( (intptr_t)sdf + sdf->distancesOffset );
-#if B3_SDF_STORAGE_IS_I8
-	for ( size_t i = 0; i < sampleCount; ++i )
-	{
-		float distance = distances[i];
-		int value = (int)roundf( distance / b3GetSDFDistanceScale( sdf ) );
-		value = b3ClampInt( value, -127, 127 );
-		if ( value == 0 && distance != 0.0f )
-		{
-			value = distance < 0.0f ? -1 : 1;
-		}
-		storage[i] = (int8_t)value;
-	}
-#else
-	memmove( storage, distances, sampleCount * sizeof( float ) );
-#endif
+	b3SDFStorageValue* storage = (b3SDFStorageValue*)( (intptr_t)sdf + sdf->samplesOffset );
+	memmove( storage, samples, sampleCount * sizeof( b3SDFStorageValue ) );
 }
 
-static uint32_t b3LoadSDFCellValues( float values[8], const b3SDFData* sdf, int x, int y, int z, bool* hasExactZero )
+static uint32_t b3LoadSDFCellValues( float values[8], const b3SDFData* sdf, int x, int y, int z )
 {
 	int strideY = sdf->countX;
 	int strideZ = sdf->countX * sdf->countY;
@@ -211,16 +133,9 @@ static uint32_t b3LoadSDFCellValues( float values[8], const b3SDFData* sdf, int 
 	values[7] = b3LoadSDFDistance( sdf, index + strideZ + strideY );
 
 	uint32_t insideMask = 0;
-	bool exactZero = false;
 	for ( int i = 0; i < 8; ++i )
 	{
 		insideMask |= (uint32_t)( values[i] < 0.0f ) << i;
-		exactZero = exactZero || values[i] == 0.0f;
-	}
-
-	if ( hasExactZero != NULL )
-	{
-		*hasExactZero = exactZero;
 	}
 	return insideMask;
 }
@@ -345,10 +260,10 @@ static int b3SDFCellTriangles( const b3Vec3* points, const float* values, b3SDFB
 	return triangleCount;
 }
 
-static int b3SDFBuildCell( const b3SDFData* sdf, int x, int y, int z, b3SDFBuildTriangle* output, bool* hasExactZero )
+static int b3SDFBuildCell( const b3SDFData* sdf, int x, int y, int z, b3SDFBuildTriangle* output )
 {
 	float values[8];
-	uint32_t insideMask = b3LoadSDFCellValues( values, sdf, x, y, z, hasExactZero );
+	uint32_t insideMask = b3LoadSDFCellValues( values, sdf, x, y, z );
 	if ( insideMask == 0 || insideMask == 0xFFu )
 	{
 		return 0;
@@ -414,14 +329,13 @@ b3SDFData* b3CreateSDF( const b3SDFDef* data )
 {
 	size_t sampleCount;
 	b3AABB aabb;
-	float distanceScale;
-	if ( b3ValidateSDFDef( data, &sampleCount, &aabb, &distanceScale ) == false )
+	if ( b3ValidateSDFDef( data, &sampleCount, &aabb ) == false )
 	{
 		return NULL;
 	}
 
 	size_t byteCount = b3AlignUp8( sizeof( b3SDFData ) );
-	int distancesOffset = (int)byteCount;
+	int samplesOffset = (int)byteCount;
 	byteCount += b3AlignUp8( sampleCount * sizeof( b3SDFStorageValue ) );
 	if ( byteCount > (size_t)INT_MAX )
 	{
@@ -437,14 +351,10 @@ b3SDFData* b3CreateSDF( const b3SDFDef* data )
 	sdf->countX = data->countX;
 	sdf->countY = data->countY;
 	sdf->countZ = data->countZ;
-#if B3_SDF_STORAGE_IS_I8
-	sdf->distanceScale = distanceScale;
-#else
-	B3_UNUSED( distanceScale );
-#endif
-	sdf->distancesOffset = distancesOffset;
+	sdf->distanceScale = data->distanceScale;
+	sdf->samplesOffset = samplesOffset;
 	sdf->aabb = aabb;
-	b3StoreSDFDistances( sdf, data->distances, sampleCount );
+	b3StoreSDFSamples( sdf, data->samples, sampleCount );
 
 	sdf->hash = 0;
 	sdf->hash = b3NonZeroHash( b3Hash( B3_HASH_INIT, (const uint8_t*)sdf, sdf->byteCount ) );
@@ -460,8 +370,7 @@ bool b3UpdateSDF( b3SDFData* sdf, const b3SDFDef* data )
 
 	size_t sampleCount;
 	b3AABB aabb;
-	float distanceScale;
-	if ( b3ValidateSDFDef( data, &sampleCount, &aabb, &distanceScale ) == false )
+	if ( b3ValidateSDFDef( data, &sampleCount, &aabb ) == false )
 	{
 		return false;
 	}
@@ -478,12 +387,8 @@ bool b3UpdateSDF( b3SDFData* sdf, const b3SDFDef* data )
 	sdf->countX = data->countX;
 	sdf->countY = data->countY;
 	sdf->countZ = data->countZ;
-#if B3_SDF_STORAGE_IS_I8
-	sdf->distanceScale = distanceScale;
-#else
-	B3_UNUSED( distanceScale );
-#endif
-	b3StoreSDFDistances( sdf, data->distances, sampleCount );
+	sdf->distanceScale = data->distanceScale;
+	b3StoreSDFSamples( sdf, data->samples, sampleCount );
 
 	sdf->hash = 0;
 	sdf->hash = b3NonZeroHash( b3Hash( B3_HASH_INIT, (const uint8_t*)sdf, sdf->byteCount ) );
@@ -609,18 +514,18 @@ bool b3OverlapSDF( const b3SDFData* shape, b3Transform shapeTransform, const b3S
 	b3ShapeProxy localProxy = b3MakeLocalProxy( proxy, shapeTransform, buffer );
 	b3AABB proxyBounds = b3ComputeProxyAABB( &localProxy );
 
-	// The signed samples make a point/volume query work even when the query shape is
-	// completely inside the SDF and therefore does not touch the extracted surface.
+	// Sign samples make a contained-volume query work without assuming the scalar
+	// magnitude is an exact metric distance.
 	for ( int i = 0; i < localProxy.count; ++i )
 	{
 		float distance = b3SDFSample( shape, localProxy.points[i] );
-		if ( distance <= localProxy.radius + B3_LINEAR_SLOP )
+		if ( distance < 0.0f )
 		{
 			return true;
 		}
 	}
 	float centerDistance = b3SDFSample( shape, b3AABB_Center( proxyBounds ) );
-	if ( centerDistance <= localProxy.radius + B3_LINEAR_SLOP )
+	if ( centerDistance < 0.0f )
 	{
 		return true;
 	}
@@ -653,85 +558,9 @@ b3CastOutput b3RayCastSDF( const b3SDFData* shape, const b3RayCastInput* input )
 	return context.output;
 }
 
-static int b3BuildSDFCellUniqueLocal( const b3SDFData* sdf, int x, int y, int z, b3SDFBuildTriangle* triangles,
-									  bool* hasExactZero )
-{
-	int candidateCount = b3SDFBuildCell( sdf, x, y, z, triangles, hasExactZero );
-	if ( *hasExactZero == false )
-	{
-		return candidateCount;
-	}
-
-	int count = 0;
-	for ( int i = 0; i < candidateCount; ++i )
-	{
-		b3SDFBuildTriangle candidate = triangles[i];
-		bool duplicate = false;
-		for ( int j = 0; j < count; ++j )
-		{
-			if ( b3SameSDFTriangleGeometry( triangles + j, &candidate ) )
-			{
-				duplicate = true;
-				break;
-			}
-		}
-		if ( duplicate == false )
-		{
-			triangles[count++] = candidate;
-		}
-	}
-	return count;
-}
-
-static bool b3SDFCellHasTriangle( const b3SDFData* sdf, int x, int y, int z, const b3SDFBuildTriangle* triangle )
-{
-	b3SDFBuildTriangle triangles[12];
-	bool hasExactZero;
-	int count = b3BuildSDFCellUniqueLocal( sdf, x, y, z, triangles, &hasExactZero );
-	for ( int i = 0; i < count; ++i )
-	{
-		if ( b3SameSDFTriangleGeometry( triangles + i, triangle ) )
-		{
-			return true;
-		}
-	}
-	return false;
-}
-
 static int b3BuildSDFCellUnique( const b3SDFData* sdf, int x, int y, int z, b3SDFBuildTriangle* triangles )
 {
-	bool hasExactZero;
-	int candidateCount = b3BuildSDFCellUniqueLocal( sdf, x, y, z, triangles, &hasExactZero );
-	if ( hasExactZero == false )
-	{
-		return candidateCount;
-	}
-
-	int count = 0;
-	for ( int i = 0; i < candidateCount; ++i )
-	{
-		b3SDFBuildTriangle candidate = triangles[i];
-
-		// Prefer the adjacent lower-index cell for a surface exactly on a cell
-		// boundary, but only if that cell generates the same triangle. Exact-zero
-		// samples can make only one of the two cells generate the surface.
-		b3Vec3 lower = b3SDFGridPoint( sdf, x, y, z );
-		bool onLowerX = x > 0 && candidate.vertices[0].x == lower.x && candidate.vertices[1].x == lower.x &&
-						candidate.vertices[2].x == lower.x;
-		bool onLowerY = y > 0 && candidate.vertices[0].y == lower.y && candidate.vertices[1].y == lower.y &&
-						candidate.vertices[2].y == lower.y;
-		bool onLowerZ = z > 0 && candidate.vertices[0].z == lower.z && candidate.vertices[1].z == lower.z &&
-						candidate.vertices[2].z == lower.z;
-		if ( ( onLowerX && b3SDFCellHasTriangle( sdf, x - 1, y, z, &candidate ) ) ||
-			 ( onLowerY && b3SDFCellHasTriangle( sdf, x, y - 1, z, &candidate ) ) ||
-			 ( onLowerZ && b3SDFCellHasTriangle( sdf, x, y, z - 1, &candidate ) ) )
-		{
-			continue;
-		}
-
-		triangles[count++] = candidate;
-	}
-	return count;
+	return b3SDFBuildCell( sdf, x, y, z, triangles );
 }
 
 static int b3SDFVertexId( b3Vec3 vertex )
@@ -787,9 +616,8 @@ void b3QuerySDF( const b3SDFData* sdf, b3AABB bounds, b3MeshQueryFcn* fcn, void*
 	b3Vec3 d2 = b3Sub( bounds.upperBound, sdf->origin );
 	b3Vec3 q1 = { d1.x / sdf->spacing.x, d1.y / sdf->spacing.y, d1.z / sdf->spacing.z };
 	b3Vec3 q2 = { d2.x / sdf->spacing.x, d2.y / sdf->spacing.y, d2.z / sdf->spacing.z };
-	// Include the cell immediately below the lower bound. A zero surface that
-	// lies exactly on a cell boundary may be owned by that lower cell. For a
-	// fractional coordinate, ceil(q) - 1 is just the containing cell.
+	// Include the cell immediately below an exact grid boundary so triangle
+	// queries from either side find the cell that owns the shared boundary.
 	int minX = b3ClampInt( (int)ceilf( q1.x ) - 1, 0, sdf->countX - 2 );
 	int minY = b3ClampInt( (int)ceilf( q1.y ) - 1, 0, sdf->countY - 2 );
 	int minZ = b3ClampInt( (int)ceilf( q1.z ) - 1, 0, sdf->countZ - 2 );

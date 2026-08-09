@@ -426,30 +426,24 @@ B3_API b3HeightFieldData* b3LoadHeightField( const char* fileName );
  * @{
  */
 
-/// Get read-only stored SDF samples in x-major order. When B3_SDF_STORAGE_IS_I8 is true, multiply each value by
-/// b3GetSDFDistanceScale to obtain its distance in local length units.
-B3_INLINE const b3SDFStorageValue* b3GetSDFDistances( const b3SDFData* sdf )
+/// Get read-only scalar-field samples in x-major order.
+B3_INLINE const b3SDFStorageValue* b3GetSDFSamples( const b3SDFData* sdf )
 {
-	if ( sdf->distancesOffset == 0 )
+	if ( sdf->samplesOffset == 0 )
 	{
 		return NULL;
 	}
 
-	return (const b3SDFStorageValue*)( (intptr_t)sdf + sdf->distancesOffset );
+	return (const b3SDFStorageValue*)( (intptr_t)sdf + sdf->samplesOffset );
 }
 
-/// Get the scale applied to stored SDF samples. This is 1 for float storage.
+/// Get the local length represented by one integer sample step.
 B3_INLINE float b3GetSDFDistanceScale( const b3SDFData* sdf )
 {
-#if B3_SDF_STORAGE_IS_I8
 	return sdf->distanceScale;
-#else
-	(void)sdf;
-	return 1.0f;
-#endif
 }
 
-/// Create a generic sampled signed-distance field.
+/// Create a generic sampled scalar field.
 B3_API b3SDFData* b3CreateSDF( const b3SDFDef* data );
 
 /// Update an SDF in place without changing its allocation. The new definition must contain the same number of samples as
@@ -533,7 +527,7 @@ B3_API b3AABB b3ComputeMeshAABB( const b3MeshData* shape, b3Transform transform,
 /// Compute the bounding box of a transformed height-field
 B3_API b3AABB b3ComputeHeightFieldAABB( const b3HeightFieldData* shape, b3Transform transform );
 
-/// Compute the bounding box of a transformed signed-distance field.
+/// Compute the bounding box of a transformed sampled scalar field.
 B3_API b3AABB b3ComputeSDFAABB( const b3SDFData* shape, b3Transform transform );
 
 /// Compute the bounding box of a compound
@@ -558,7 +552,7 @@ B3_API bool b3OverlapCompound( const b3CompoundData* shape, b3Transform shapeTra
 /// Overlap shape versus height field
 B3_API bool b3OverlapHeightField( const b3HeightFieldData* shape, b3Transform shapeTransform, const b3ShapeProxy* proxy );
 
-/// Overlap shape versus signed-distance field.
+/// Overlap shape versus sampled scalar field.
 B3_API bool b3OverlapSDF( const b3SDFData* shape, b3Transform shapeTransform, const b3ShapeProxy* proxy );
 
 /// Overlap shape versus hull
@@ -596,7 +590,7 @@ B3_API b3CastOutput b3RayCastMesh( const b3Mesh* shape, const b3RayCastInput* in
 /// Ray cast versus height field in local space. A thin surface with no interior, so there is no overlap case.
 B3_API b3CastOutput b3RayCastHeightField( const b3HeightFieldData* shape, const b3RayCastInput* input );
 
-/// Ray cast versus signed-distance field.
+/// Ray cast versus sampled scalar field.
 B3_API b3CastOutput b3RayCastSDF( const b3SDFData* shape, const b3RayCastInput* input );
 
 /// Shape cast versus a sphere. Initial overlap is treated as a miss.
@@ -617,7 +611,7 @@ B3_API b3CastOutput b3ShapeCastMesh( const b3Mesh* shape, const b3ShapeCastInput
 /// Shape cast versus a height field. Initial overlap is treated as a miss.
 B3_API b3CastOutput b3ShapeCastHeightField( const b3HeightFieldData* shape, const b3ShapeCastInput* input );
 
-/// Shape cast versus signed-distance field.
+/// Shape cast versus sampled scalar field.
 B3_API b3CastOutput b3ShapeCastSDF( const b3SDFData* shape, const b3ShapeCastInput* input );
 
 /// Query callback.
