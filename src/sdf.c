@@ -118,6 +118,12 @@ static void b3StoreSDFSamples( b3SDFData* sdf, const b3SDFStorageValue* samples,
 	memmove( storage, samples, sampleCount * sizeof( b3SDFStorageValue ) );
 }
 
+static uint32_t b3SDFNonZeroHash( const uint8_t* bytes, int byteCount )
+{
+	uint32_t hash = b3Hash( B3_HASH_INIT, bytes, byteCount );
+	return hash == 0 ? 1u : hash;
+}
+
 static uint32_t b3LoadSDFCellValues( float values[8], const b3SDFData* sdf, int x, int y, int z )
 {
 	int strideY = sdf->countX;
@@ -357,7 +363,7 @@ b3SDFData* b3CreateSDF( const b3SDFDef* data )
 	b3StoreSDFSamples( sdf, data->samples, sampleCount );
 
 	sdf->hash = 0;
-	sdf->hash = b3NonZeroHash( b3Hash( B3_HASH_INIT, (const uint8_t*)sdf, sdf->byteCount ) );
+	sdf->hash = b3SDFNonZeroHash( (const uint8_t*)sdf, sdf->byteCount );
 	return sdf;
 }
 
@@ -391,7 +397,7 @@ bool b3UpdateSDF( b3SDFData* sdf, const b3SDFDef* data )
 	b3StoreSDFSamples( sdf, data->samples, sampleCount );
 
 	sdf->hash = 0;
-	sdf->hash = b3NonZeroHash( b3Hash( B3_HASH_INIT, (const uint8_t*)sdf, sdf->byteCount ) );
+	sdf->hash = b3SDFNonZeroHash( (const uint8_t*)sdf, sdf->byteCount );
 	return true;
 }
 

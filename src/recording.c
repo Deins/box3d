@@ -1177,7 +1177,7 @@ uint32_t b3RecInternSDF( b3Recording* rec, const b3SDFData* sdf )
 	int byteCount = sdf->byteCount;
 	uint8_t* bytes = (uint8_t*)b3Alloc( (size_t)byteCount );
 	memcpy( bytes, sdf, (size_t)byteCount );
-	uint64_t h = b3Hash64Blob( bytes, byteCount );
+	uint64_t h = b3Hash64NonZero( bytes, byteCount );
 	return b3InternGeometry( &rec->registry, b3_geometrySDF, h, bytes, byteCount );
 }
 
