@@ -323,6 +323,8 @@ b3WorldId b3CreateWorld( const b3WorldDef* def )
 	world->activeTaskCount = 0;
 	world->taskCount = 0;
 	world->gravity = def->gravity;
+	world->gravityCallback = def->gravityCallback;
+	world->gravityContext = def->gravityContext;
 	world->hitEventThreshold = def->hitEventThreshold;
 	world->restitutionThreshold = def->restitutionThreshold;
 	world->maxLinearSpeed = def->maximumLinearSpeed;
@@ -3332,6 +3334,13 @@ b3Vec3 b3World_GetGravity( b3WorldId worldId )
 {
 	b3World* world = b3GetWorldFromId( worldId );
 	return world->gravity;
+}
+
+void b3World_SetGravityCallback( b3WorldId worldId, b3GravityCallback* callback, void* context )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+	world->gravityCallback = callback;
+	world->gravityContext = callback != NULL ? context : NULL;
 }
 
 typedef struct ExplosionContext

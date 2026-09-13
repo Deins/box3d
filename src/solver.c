@@ -73,7 +73,10 @@ static void b3IntegrateVelocitiesTask( b3SolverBlock block, b3StepContext* conte
 	b3BodyState* states = context->states;
 	b3BodySim* sims = context->sims;
 
-	b3Vec3 gravity = context->world->gravity;
+	b3World* world = context->world;
+	b3Vec3 uniformGravity = world->gravity;
+	b3GravityCallback* gravityCallback = world->gravityCallback;
+	void* gravityContext = world->gravityContext;
 	float h = context->h;
 
 	for ( int i = block.startIndex; i < block.startIndex + block.count; ++i )
@@ -96,6 +99,7 @@ static void b3IntegrateVelocitiesTask( b3SolverBlock block, b3StepContext* conte
 
 		// Gravity scale will be zero for kinematic bodies
 		float gravityScale = sim->invMass > 0.0f ? sim->gravityScale : 0.0f;
+		b3Vec3 gravity = gravityCallback != NULL ? gravityCallback( &sim->center, gravityContext ) : uniformGravity;
 
 		b3Vec3 linearVelocityDelta = b3Blend2( h * sim->invMass, sim->force, h * gravityScale, gravity );
 		v = b3MulAdd( linearVelocityDelta, linearDamping, v );

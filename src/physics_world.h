@@ -226,6 +226,8 @@ typedef struct b3World
 	int splitIslandId;
 
 	b3Vec3 gravity;
+	b3GravityCallback* gravityCallback;
+	void* gravityContext;
 	float hitEventThreshold;
 	float restitutionThreshold;
 	float maxLinearSpeed;

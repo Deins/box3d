@@ -60,6 +60,14 @@ typedef float b3FrictionCallback( float frictionA, uint64_t userMaterialIdA, flo
 /// @ingroup world
 typedef float b3RestitutionCallback( float restitutionA, uint64_t userMaterialIdA, float restitutionB, uint64_t userMaterialIdB );
 
+/// Optional spatial gravity field callback. This is evaluated once for each awake body during
+/// velocity integration, so the returned acceleration may vary with world position.
+/// This callback can run concurrently and its context must remain valid until the world is
+/// destroyed or the callback is replaced.
+/// @warning Do not attempt to modify Box3D state from this callback.
+/// @ingroup world
+typedef b3Vec3 b3GravityCallback( const b3Pos* position, void* context );
+
 /// Prototype for a contact filter callback.
 /// This is called when a contact pair is considered for collision. This allows you to
 /// perform custom logic to prevent collision between shapes. This is only called if
@@ -142,6 +150,12 @@ typedef struct b3WorldDef
 {
 	/// Gravity vector. Box3D has no up-vector defined.
 	b3Vec3 gravity;
+
+	/// Optional position-dependent gravity. When provided this replaces gravity for each body.
+	b3GravityCallback* gravityCallback;
+
+	/// User context passed to gravityCallback.
+	void* gravityContext;
 
 	/// Restitution speed threshold, usually in m/s. Collisions above this
 	/// speed have restitution applied (will bounce).

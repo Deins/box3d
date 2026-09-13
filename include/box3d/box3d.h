@@ -173,6 +173,10 @@ B3_API void b3World_SetGravity( b3WorldId worldId, b3Vec3 gravity );
 /// Get the gravity vector
 B3_API b3Vec3 b3World_GetGravity( b3WorldId worldId );
 
+/// Set an optional position-dependent gravity field. Passing NULL restores the uniform world
+/// gravity. The callback may run concurrently during b3World_Step.
+B3_API void b3World_SetGravityCallback( b3WorldId worldId, b3GravityCallback* callback, void* context );
+
 /// Apply a radial explosion
 /// @param worldId The world id
 /// @param explosionDef The explosion definition
